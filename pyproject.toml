@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "catranger"
+version = "0.1.0"
+description = "Cat detection + tracking + monocular distance for the Monsson hack-a-ton 2026 (Go2 / Tapo C211)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "pyyaml>=6.0",
+]
+
+# Heavy / optional backends. Core (catranger.config / intrinsics / io / types)
+# imports with just the base deps above; perception/depth/training import these
+# lazily and raise a clear message if missing.
+[project.optional-dependencies]
+ml = [
+    "torch>=2.1",
+    "torchvision>=0.16",
+    "ultralytics>=8.3.0",
+    "transformers>=4.45.0",
+]
+train = [
+    "ultralytics>=8.3.0",
+    "roboflow>=1.1.0",
+    "fiftyone>=0.24",
+]
+hw = [
+    "pyserial>=3.5",
+    "pytapo>=3.3",
+]
+dev = [
+    "pytest>=7.4",
+    "typer>=0.12",
+]
+
+[project.scripts]
+catranger = "catranger.cli:app"
+
+[tool.setuptools]
+packages = ["catranger", "catranger.hw", "catranger.train", "catranger.eval"]
+
+[tool.setuptools.package-dir]
+"" = "."

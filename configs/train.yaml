@@ -1,0 +1,33 @@
+# Fine-tune (NOT from scratch) a pretrained YOLO on a cat dataset, Karpathy-style:
+# one file, one frozen metric (val mAP50-95), deterministic seed, surgical changes.
+base_model: yolo11s.pt          # pretrained COCO weights = the starting point
+data: data/cat/data.yaml        # Ultralytics dataset yaml (written by prepare.py)
+epochs: 40
+imgsz: 640
+batch: 16
+seed: 0
+device: 0                       # gpu id; "cpu" to force CPU
+project: runs/train
+name: cat_finetune
+patience: 12                    # early stop
+metric: metrics/mAP50-95(B)     # the frozen number the keep/reject loop optimizes
+
+# Dataset acquisition (prepare.py). Pick one source; roboflow is the fastest path.
+dataset:
+  source: roboflow              # roboflow | openimages | manual
+  roboflow:
+    workspace: ""               # fill from your Roboflow Universe project
+    project: ""
+    version: 1
+    api_key_env: ROBOFLOW_API_KEY
+  openimages:
+    classes: [Cat]
+    max_samples: 2000
+
+# autoresearch.py: fixed-budget keep/reject experiments over these knobs.
+autoresearch:
+  budget_min: 5                 # minutes per experiment (autoresearch convention)
+  trials:
+    - { lr0: 0.01,  mosaic: 1.0 }
+    - { lr0: 0.005, mosaic: 0.5 }
+    - { lr0: 0.02,  mosaic: 1.0, degrees: 10.0 }   # low-angle Go2 view augmentation

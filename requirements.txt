@@ -1,0 +1,21 @@
+# ---- core (always needed; pure-CPU) ----
+numpy>=1.24
+opencv-python>=4.8
+pyyaml>=6.0
+
+# ---- perception / depth (GPU recommended) ----
+torch>=2.1
+torchvision>=0.16
+ultralytics>=8.3.0          # YOLO11 / RT-DETR + ByteTrack/BoT-SORT trackers
+transformers>=4.45.0        # Depth Anything V2 metric depth
+
+# ---- training (fine-tune) ----
+# roboflow>=1.1.0           # uncomment to pull a cat dataset from Roboflow Universe
+# fiftyone>=0.24            # uncomment to pull Cat boxes from Open Images V7
+
+# ---- hardware integration (only on the Pi / robot host) ----
+# pyserial>=3.5             # Arduino serial bridge
+# pytapo>=3.3               # Tapo C211 pan/tilt control
+
+# ---- dev / cli ----
+typer>=0.12
