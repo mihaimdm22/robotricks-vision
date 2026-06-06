@@ -2,6 +2,31 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.3.0] - 2026-06-07
+
+Web control panel: a live distance-history chart and the operator UI restyled to the
+CatRanger brand identity. No perception/geometry behavior changed; the control core and
+`app.js` behavior are untouched.
+
+### Added
+- **Distance history** (`catranger/web/store.py`): a stdlib-`sqlite3` log of distance over
+  time — model estimate ± confidence interval vs HC-SR04 ground truth — recorded from the
+  control loop (throttled by `history_hz`) and persisted across restarts. New
+  `GET /api/history?limit=&since=`. The write is wrapped so a sqlite error can never take
+  down the control thread.
+- **Live history chart** in the panel: a dependency-free `<canvas>` chart that backfills
+  from `/api/history` on load, then appends live points from the telemetry WebSocket
+  (estimate line + CI band + HC-SR04 line).
+- Telemetry now carries the CI band (`target_dist_lo` / `target_dist_hi`).
+- `tests/test_web_history.py` — `DistanceStore` record/recent (ordering, limit, since, nullable columns).
+
+### Changed
+- **Control panel restyled** to the mechanical-movement brand: drive orange + motion purple
+  on a dark neon-glass canvas, Space Grotesk / Geist / Geist Mono (self-hosted in
+  `static/fonts/`), radial glows + engineering grid. Safety affordances stay red/amber. No
+  markup ids/classes/`data-*` or JS behavior changed.
+- `configs/web.yaml`: added `history_db` and `history_hz`.
+
 ## [0.2.0] - 2026-06-06
 
 Repo hardening — the hack-a-ton entry is now a maintained project. No perception/geometry
