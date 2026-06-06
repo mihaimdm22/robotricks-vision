@@ -124,6 +124,10 @@ an offline demo with `make fetch-weights`. Camera over RTSP needs a Tapo **Camer
 > The legacy zero-Node panel is still served at `http://<laptop-ip>:8080/` as a fallback
 > for a live demo with no Node toolchain. The Next.js console at `:3000` is the primary UI.
 
+**Deploy:** the marketing **landing** deploys to Vercel as a public site (Root
+Directory `apps/web`); the **console stays local** — a public HTTPS page can't reach
+a LAN/no-auth robot backend. See `apps/web/README.md` → *Deploy to Vercel*.
+
 ## Development
 
 `uv sync` installs the dev toolchain (ruff, mypy, pytest, pre-commit). Run the full gate
