@@ -1,7 +1,9 @@
 # TP-Link Tapo C211 — your live-demo camera. NOT the contest camera.
 # The intrinsics below are a ROUGH guess for a 1080p ~110-115 deg lens and MUST be
-# re-anchored before trusting metric distance: hold an object of known size at a
-# known distance, run `catranger calibrate`, and overwrite fx/fy here.
+# re-anchored before trusting metric distance. There is NO `catranger calibrate`
+# command — re-anchor manually: photograph an object of known height H_real (m) at
+# a known distance Z (m), read its pixel height h_px, then set fx = fy = h_px*Z/H_real
+# and overwrite the values below.
 name: tapo_c211
 fx: 1100.0              # PLACEHOLDER — re-anchor (see needs_calibration)
 fy: 1100.0              # PLACEHOLDER
