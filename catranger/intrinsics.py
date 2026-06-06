@@ -7,14 +7,12 @@ pinhole math on the rectified image. See docs/research/how-far.md sec 0.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 import numpy as np
 
 try:  # cv2 is in core deps but guard so import errors are obvious
     import cv2
 except Exception:  # pragma: no cover
-    cv2 = None
+    cv2 = None  # type: ignore[assignment]
 
 from catranger.config import CameraConfig
 
@@ -29,8 +27,8 @@ class CameraModel:
         self.K = np.array(
             [[self.fx, 0, self.cx], [0, self.fy, self.cy], [0, 0, 1.0]], dtype=np.float64
         )
-        self._map_x: Optional[np.ndarray] = None
-        self._map_y: Optional[np.ndarray] = None
+        self._map_x: np.ndarray | None = None
+        self._map_y: np.ndarray | None = None
 
     # ---- undistortion (FOV / division model from known FOV) ----
     def _build_maps(self, w: int, h: int) -> None:
@@ -56,6 +54,7 @@ class CameraModel:
         h, w = img_bgr.shape[:2]
         if self._map_x is None or self._map_x.shape[:2] != (h, w):
             self._build_maps(w, h)
+        assert self._map_x is not None and self._map_y is not None  # set by _build_maps
         return cv2.remap(img_bgr, self._map_x, self._map_y, cv2.INTER_LINEAR)
 
     # ---- pinhole geometry ----
@@ -93,7 +92,7 @@ class CameraModel:
         return float(1.0 / (1.0 + r2))
 
     def inter_object_distance(
-        self, c1: Tuple[float, float], z1: float, c2: Tuple[float, float], z2: float
+        self, c1: tuple[float, float], z1: float, c2: tuple[float, float], z2: float
     ) -> float:
         """Euclidean metric distance between two objects given their pixel centers
         and metric depths."""

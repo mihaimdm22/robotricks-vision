@@ -2,6 +2,38 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.2.0] - 2026-06-06
+
+Repo hardening — the hack-a-ton entry is now a maintained project. No perception/geometry
+behavior changed; the guaranteed pretrained demo is untouched.
+
+### Added
+- **Test suite** (`tests/`): 52 pytest cases over the deterministic core — camera geometry,
+  distance fusion + the load-bearing weighted-median tie-break, the graded eval metrics,
+  config resolution, data contracts, frame-source ordering, and the follow state machine
+  (SEARCH/ACQUIRE/TRACK/COAST/SAFE). ~89% coverage on the pure core; CI gate at 85%.
+- **Tooling via `uv`**: `uv.lock` for reproducible installs; dev toolchain in a PEP 735
+  `[dependency-groups]`; torch pinned to the CPU index for lockability.
+- **Ruff** lint + format and **mypy** type-checking (both configured in `pyproject.toml`,
+  both clean), **pre-commit** hooks (ruff, mypy, nbstripout, large-file guard), and
+  **GitHub Actions CI** (lint+types, pytest matrix on 3.11–3.13, CPU-torch import-smoke).
+- `CONTRIBUTING.md`; `make` targets `lint` / `format` / `typecheck` / `test` / `check`.
+
+### Changed
+- **Python floor 3.9 → 3.11** (`requires-python`): the code already used PEP 604 unions.
+- Package management moved from pip/`requirements.txt` to `uv` (single source of truth:
+  `pyproject.toml` + `uv.lock`); README and Makefile updated.
+- `control.Follower` gained an optional injectable `clock` (default unchanged) so the
+  safety-critical lost-target timeout logic is deterministically testable.
+- `CLAUDE.md`: added a "Maintenance mode" section scoping the frozen-metric doctrine to the
+  perception core while exempting tooling/tests/CI/docs.
+
+### Removed
+- `requirements.txt` (replaced by `pyproject.toml` + `uv.lock`; regenerate with `uv export`
+  if a pip-only host needs it) and the unused `typer` dependency.
+- Linter-surfaced dead code: an unused `cx` local in `control.py` and a pointless walrus
+  assignment in `scripts/demo.py`.
+
 ## [0.1.1] - 2026-06-06
 
 ### Fixed

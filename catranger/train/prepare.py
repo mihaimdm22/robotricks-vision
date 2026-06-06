@@ -24,7 +24,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import yaml
 
@@ -39,13 +39,13 @@ CLASS_NAMES = {0: "cat"}
 # --------------------------------------------------------------------------- #
 # config
 # --------------------------------------------------------------------------- #
-def _load_config(path: str) -> Dict[str, Any]:
+def _load_config(path: str) -> dict[str, Any]:
     p = Path(path)
     if not p.is_absolute():
         p = (_REPO_ROOT / p).resolve()
     if not p.exists():
         raise FileNotFoundError(f"train config not found: {p}")
-    with open(p, "r") as f:
+    with open(p) as f:
         return yaml.safe_load(f) or {}
 
 
@@ -68,7 +68,7 @@ def _write_data_yaml(root: Path, train_rel: str, val_rel: str) -> Path:
 # --------------------------------------------------------------------------- #
 # source: roboflow
 # --------------------------------------------------------------------------- #
-def _prepare_roboflow(cfg: Dict[str, Any]) -> Path:
+def _prepare_roboflow(cfg: dict[str, Any]) -> Path:
     rf_cfg = (cfg.get("dataset", {}) or {}).get("roboflow", {}) or {}
     workspace = rf_cfg.get("workspace", "")
     project = rf_cfg.get("project", "")
@@ -105,7 +105,9 @@ def _prepare_roboflow(cfg: Dict[str, Any]) -> Path:
     rf_yaml = Path(getattr(dataset, "location", str(DATA_DIR))) / "data.yaml"
     # Roboflow already writes a usable data.yaml; normalize it so train.py finds the
     # same keys (absolute path, single class) regardless of the project's own naming.
-    _normalize_downloaded_yaml(Path(dataset.location) if hasattr(dataset, "location") else DATA_DIR, rf_yaml)
+    _normalize_downloaded_yaml(
+        Path(dataset.location) if hasattr(dataset, "location") else DATA_DIR, rf_yaml
+    )
     return DATA_YAML
 
 
@@ -115,7 +117,7 @@ def _normalize_downloaded_yaml(root: Path, src_yaml: Path) -> None:
     train_rel, val_rel = "train/images", "valid/images"
     if src_yaml.exists():
         try:
-            with open(src_yaml, "r") as f:
+            with open(src_yaml) as f:
                 d = yaml.safe_load(f) or {}
             train_rel = _rel_or_default(d.get("train"), train_rel)
             val_rel = _rel_or_default(d.get("val") or d.get("valid"), val_rel)
@@ -131,14 +133,14 @@ def _rel_or_default(value: Any, default: str) -> str:
     # strip leading ../ and absolute roots so the path is relative to data.yaml's `path`
     for token in ("../", "./"):
         while s.startswith(token):
-            s = s[len(token):]
+            s = s[len(token) :]
     return s or default
 
 
 # --------------------------------------------------------------------------- #
 # source: openimages (via fiftyone)
 # --------------------------------------------------------------------------- #
-def _prepare_openimages(cfg: Dict[str, Any]) -> Path:
+def _prepare_openimages(cfg: dict[str, Any]) -> Path:
     oi_cfg = (cfg.get("dataset", {}) or {}).get("openimages", {}) or {}
     classes = list(oi_cfg.get("classes", ["Cat"]))
     max_samples = int(oi_cfg.get("max_samples", 2000))
@@ -148,8 +150,7 @@ def _prepare_openimages(cfg: Dict[str, Any]) -> Path:
         import fiftyone.zoo as foz
     except Exception as e:  # pragma: no cover - depends on env
         raise SystemExit(
-            "fiftyone not installed. `pip install fiftyone`\n"
-            f"  (original import error: {e})"
+            f"fiftyone not installed. `pip install fiftyone`\n  (original import error: {e})"
         )
 
     if DATA_DIR.exists():
@@ -192,7 +193,7 @@ def _prepare_openimages(cfg: Dict[str, Any]) -> Path:
 # --------------------------------------------------------------------------- #
 # source: manual
 # --------------------------------------------------------------------------- #
-def _prepare_manual(cfg: Dict[str, Any]) -> Path:
+def _prepare_manual(cfg: dict[str, Any]) -> Path:
     """No download. Scaffold the Ultralytics dir layout + print what to drop where."""
     for split in ("train", "val"):
         (DATA_DIR / "images" / split).mkdir(parents=True, exist_ok=True)
@@ -200,14 +201,12 @@ def _prepare_manual(cfg: Dict[str, Any]) -> Path:
     _write_data_yaml(DATA_DIR, "images/train", "images/val")
 
     print(
-        "\n[prepare] manual scaffold ready at {root}\n"
+        f"\n[prepare] manual scaffold ready at {DATA_DIR}\n"
         "  Drop your data like this (Ultralytics format, single class 'cat' = id 0):\n"
-        "    {root}/images/train/*.jpg   + {root}/labels/train/*.txt\n"
-        "    {root}/images/val/*.jpg     + {root}/labels/val/*.txt\n"
+        f"    {DATA_DIR}/images/train/*.jpg   + {DATA_DIR}/labels/train/*.txt\n"
+        f"    {DATA_DIR}/images/val/*.jpg     + {DATA_DIR}/labels/val/*.txt\n"
         "  Each label .txt has one line per box:  0 cx cy w h   (all normalized 0..1)\n"
-        "  Then run:  python -m catranger.train.train --config configs/train.yaml\n".format(
-            root=DATA_DIR
-        )
+        "  Then run:  python -m catranger.train.train --config configs/train.yaml\n"
     )
     return DATA_YAML
 

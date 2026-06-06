@@ -66,7 +66,9 @@ def main() -> int:
         cm = link.read_distance_cm()
         now = time.perf_counter()
         if now - last_print > 0.5:
-            print(f"  t={now - t0:4.1f}s  sent {wire.strip():18s}  distance={cm if cm is not None else '--'} cm  [{label}]")
+            print(
+                f"  t={now - t0:4.1f}s  sent {wire.strip():18s}  distance={cm if cm is not None else '--'} cm  [{label}]"
+            )
             last_print = now
         time.sleep(0.5)
         i += 1

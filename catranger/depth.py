@@ -16,15 +16,13 @@ All heavy deps (torch / transformers / unidepth) are imported lazily inside meth
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 import numpy as np
 
 # canonical HF / hub handles for the supported backends
 _DAV2_METRIC_INDOOR_ID = "depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf"
 _UNIDEPTH_V2_ID = "lpiccinelli/unidepth-v2-vitl14"
 
-DepthOutput = Tuple[np.ndarray, Optional[np.ndarray]]
+DepthOutput = tuple[np.ndarray, np.ndarray | None]
 
 
 class DepthNet:
@@ -41,7 +39,7 @@ class DepthNet:
     def __init__(
         self,
         backend: str = "depth_anything_v2_metric_indoor",
-        device: Optional[str] = None,
+        device: str | None = None,
     ) -> None:
         self.backend = str(backend).lower()
         self._device = device  # resolved on first load
@@ -123,7 +121,7 @@ class DepthNet:
         return model
 
     # ---- inference ----
-    def infer(self, frame_bgr: np.ndarray, K: Optional[np.ndarray] = None) -> DepthOutput:
+    def infer(self, frame_bgr: np.ndarray, K: np.ndarray | None = None) -> DepthOutput:
         """Estimate metric depth for a BGR frame.
 
         Returns (depth_HxW_float32_meters, confidence_or_None). `K` (3x3 intrinsics) is
@@ -138,6 +136,8 @@ class DepthNet:
         import torch
 
         model = self._load()
+        # _load() -> _load_dav2() sets the processor for this backend
+        assert self._processor is not None
         h, w = frame_bgr.shape[:2]
         # BGR -> RGB for the HF processor. ascontiguousarray() is required: a bare
         # [..., ::-1] view has a negative stride, which transformers>=5 rejects in
@@ -153,9 +153,7 @@ class DepthNet:
         # Prefer the processor's post-process (interpolates to size + strips padding).
         depth = None
         try:
-            post = self._processor.post_process_depth_estimation(
-                outputs, target_sizes=[(h, w)]
-            )
+            post = self._processor.post_process_depth_estimation(outputs, target_sizes=[(h, w)])
             depth = post[0]["predicted_depth"]
         except Exception:
             # Fallback for older transformers without post_process_depth_estimation.
@@ -169,9 +167,7 @@ class DepthNet:
             depth_np = _resize_depth(depth_np, w, h)
         return depth_np, None
 
-    def _infer_unidepth(
-        self, frame_bgr: np.ndarray, K: Optional[np.ndarray]
-    ) -> DepthOutput:
+    def _infer_unidepth(self, frame_bgr: np.ndarray, K: np.ndarray | None) -> DepthOutput:
         import torch
 
         model = self._load()

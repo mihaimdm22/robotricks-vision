@@ -30,8 +30,6 @@ hardware attached — it just records/prints the commands it would have sent.
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from catranger.types import Command
 
 # Servo travel for the camera pan mount. Command.dy in [-1, 1] maps linearly onto
@@ -61,10 +59,10 @@ def _to_servo(norm: float) -> int:
 def encode(cmd: Command) -> str:
     """Build the exact wire line 'C <dx> <dy> <rot> <pan>\\n' from a Command,
     applying the field mapping documented at the top of this module."""
-    dx = _to_motor(cmd.dx)            # lateral strafe
-    dy = _to_motor(cmd.v_fwd)         # forward drive  (serial 'dy' axis)
-    rot = _to_motor(cmd.rotation)     # yaw / turn
-    pan = _to_servo(cmd.dy)           # camera pan servo angle
+    dx = _to_motor(cmd.dx)  # lateral strafe
+    dy = _to_motor(cmd.v_fwd)  # forward drive  (serial 'dy' axis)
+    rot = _to_motor(cmd.rotation)  # yaw / turn
+    pan = _to_servo(cmd.dy)  # camera pan servo angle
     return f"C {dx} {dy} {rot} {pan}\n"
 
 
@@ -92,7 +90,7 @@ class ArduinoBridge:
         self._ser.write(line.encode("ascii"))
         return line
 
-    def read_distance_cm(self) -> Optional[int]:
+    def read_distance_cm(self) -> int | None:
         """Non-blocking: drain pending bytes, return the cm from the most recent
         complete 'D <cm>\\n' line, or None if no full line arrived. -1 from the
         sensor (no echo) is passed through as -1 (still an int, distinct from None).
@@ -103,7 +101,7 @@ class ArduinoBridge:
             pending = 0
         if pending:
             self._rx += self._ser.read(pending)
-        latest: Optional[int] = None
+        latest: int | None = None
         while b"\n" in self._rx:
             raw, self._rx = self._rx.split(b"\n", 1)
             line = raw.strip()
@@ -129,11 +127,11 @@ class DummyBridge:
     line it would have sent (and optionally prints them) so the pipeline/demo can
     run end-to-end on a laptop with nothing plugged in."""
 
-    def __init__(self, port: Optional[str] = None, baud: int = 115200, verbose: bool = False) -> None:
+    def __init__(self, port: str | None = None, baud: int = 115200, verbose: bool = False) -> None:
         self.port = port
         self.baud = baud
         self.verbose = verbose
-        self.sent: List[str] = []
+        self.sent: list[str] = []
 
     def send(self, cmd: Command) -> str:
         line = encode(cmd)
@@ -142,7 +140,7 @@ class DummyBridge:
             print("[DummyBridge] ->", line.strip())
         return line
 
-    def read_distance_cm(self) -> Optional[int]:
+    def read_distance_cm(self) -> int | None:
         """No sensor attached -> always None (matches 'nothing arrived')."""
         return None
 
@@ -150,7 +148,7 @@ class DummyBridge:
         return None
 
 
-def open_bridge(port: Optional[str] = None, baud: int = 115200, verbose: bool = False):
+def open_bridge(port: str | None = None, baud: int = 115200, verbose: bool = False):
     """Factory: real ArduinoBridge when a port is given and pyserial is installed,
     otherwise a DummyBridge. Both share the same interface (send / read_distance_cm
     / close), so callers never branch on hardware presence.

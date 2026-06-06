@@ -24,21 +24,20 @@ from __future__ import annotations
 import glob
 import sys
 import threading
-import time
-from typing import List, Optional
+from typing import Any
 
-from catranger.types import Command
 from catranger.hw.serial_bridge import ArduinoBridge, DummyBridge, encode
+from catranger.types import Command
 
 # HM-10 / HM-19 / AT-09 family expose a single transparent-UART characteristic.
 # Nordic UART Service (NUS) split TX/RX UUIDs are also supported via the kwargs.
 HM10_SERVICE = "0000ffe0-0000-1000-8000-00805f9b34fb"
 HM10_CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb"  # write + notify on the same char
-NUS_TX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"      # host -> device (write)
-NUS_RX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"      # device -> host (notify)
+NUS_TX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # host -> device (write)
+NUS_RX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # device -> host (notify)
 
 
-def list_bt_serial_ports() -> List[str]:
+def list_bt_serial_ports() -> list[str]:
     """Best-effort list of candidate Bluetooth SPP serial devices for HC-05/06."""
     if sys.platform == "darwin":
         return sorted(glob.glob("/dev/cu.*"))  # filter by name (HC-05, RNBT, ...) yourself
@@ -68,7 +67,7 @@ class BLEBridge:
         self,
         address: str,
         char: str = HM10_CHAR,
-        rx_char: Optional[str] = None,
+        rx_char: str | None = None,
         connect_timeout: float = 15.0,
     ) -> None:
         try:
@@ -81,10 +80,10 @@ class BLEBridge:
 
         self._BleakClient = BleakClient
         self.address = address
-        self.tx_char = char            # host -> device (write)
+        self.tx_char = char  # host -> device (write)
         self.rx_char = rx_char or char  # device -> host (notify); HM-10 = same char
         self._rx = b""
-        self._latest: Optional[int] = None
+        self._latest: int | None = None
         self._lock = threading.Lock()
 
         # bleak is asyncio; run a private event loop in a daemon thread and marshal
@@ -93,7 +92,7 @@ class BLEBridge:
 
         self._asyncio = asyncio
         self._loop = asyncio.new_event_loop()
-        self._client = None
+        self._client: Any = None  # bleak client, created in _connect()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
         self._call(self._connect(connect_timeout))
@@ -134,12 +133,10 @@ class BLEBridge:
     # ---- public interface (matches ArduinoBridge) ----
     def send(self, cmd: Command) -> str:
         line = encode(cmd)
-        self._call(
-            self._client.write_gatt_char(self.tx_char, line.encode("ascii"), response=False)
-        )
+        self._call(self._client.write_gatt_char(self.tx_char, line.encode("ascii"), response=False))
         return line
 
-    def read_distance_cm(self) -> Optional[int]:
+    def read_distance_cm(self) -> int | None:
         with self._lock:
             return self._latest
 
@@ -156,7 +153,7 @@ class BLEBridge:
 
 def open_link(
     connection: str = "auto",
-    target: Optional[str] = None,
+    target: str | None = None,
     baud: int = 115200,
     verbose: bool = False,
 ):
@@ -173,6 +170,9 @@ def open_link(
     """
     conn = (connection or "auto").lower()
     if conn == "dummy" or (conn == "auto" and not target):
+        return DummyBridge(port=target, verbose=verbose)
+    if target is None:
+        # a real transport was requested but no port/address was given
         return DummyBridge(port=target, verbose=verbose)
 
     if conn == "ble":

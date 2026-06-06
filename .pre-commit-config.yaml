@@ -1,0 +1,38 @@
+# Pre-commit hooks for CatRanger.
+#   uv run pre-commit install        # enable on every commit
+#   uv run pre-commit run --all-files
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.16
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # mypy runs in the project venv (via uv) so it sees numpy + the installed package
+  # and the [tool.mypy] config in pyproject — identical to local and CI.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  # Strip notebook outputs so demo.ipynb stays a clean, reviewable diff.
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.9.1
+    hooks:
+      - id: nbstripout
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]  # model weights (*.pt) and clips (*.mp4) must not be committed
+        exclude: '^uv\.lock$'  # the lockfile is legitimately ~1 MB and IS meant to be committed

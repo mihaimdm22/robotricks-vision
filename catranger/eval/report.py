@@ -16,15 +16,14 @@ import argparse
 import math
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
-from catranger.types import Command, FrameResult
 from catranger.eval.metrics import (
     distance_mae,
     fps_stats,
     smoothness,
     track_stats,
 )
+from catranger.types import Command, FrameResult
 
 # Pretty labels + how to render each metric key. Anything not listed falls back
 # to a plain str() with 4-dp rounding for floats.
@@ -64,11 +63,11 @@ _PERCENT_KEYS = {"mape"}
 
 
 def run_eval(
-    results: List[FrameResult],
-    commands: List[Command],
-    frame_times: List[float],
-    gts: Optional[Dict[str, List[float]]] = None,
-) -> Dict[str, dict]:
+    results: list[FrameResult],
+    commands: list[Command],
+    frame_times: list[float],
+    gts: dict[str, list[float]] | None = None,
+) -> dict[str, dict]:
     """Assemble every metric dict from raw per-frame outputs.
 
     Args:
@@ -80,7 +79,7 @@ def run_eval(
 
     Returns a nested dict keyed by section name; pass straight to build_report().
     """
-    metrics: Dict[str, dict] = {
+    metrics: dict[str, dict] = {
         "fps": fps_stats(frame_times),
         "tracking": track_stats(results),
         "smoothness": smoothness(commands),
@@ -104,7 +103,7 @@ def _fmt_value(key: str, value: object) -> str:
     return str(value)
 
 
-def _metric_table(section: Dict[str, object]) -> List[str]:
+def _metric_table(section: dict[str, object]) -> list[str]:
     """Render one metric dict as a 2-column markdown table."""
     lines = ["| Metric | Value |", "| --- | --- |"]
     for key, value in section.items():
@@ -113,9 +112,9 @@ def _metric_table(section: Dict[str, object]) -> List[str]:
     return lines
 
 
-def _verdict(metrics: Dict[str, dict]) -> List[str]:
+def _verdict(metrics: dict[str, dict]) -> list[str]:
     """A short headline so the report leads with the graded numbers."""
-    bullets: List[str] = []
+    bullets: list[str] = []
     fps = metrics.get("fps", {})
     if fps.get("n"):
         mean_fps = float(fps.get("mean_fps", 0.0))
@@ -144,8 +143,16 @@ def _verdict(metrics: Dict[str, dict]) -> List[str]:
     if dist and dist.get("n"):
         mae = dist.get("mae")
         mape = dist.get("mape")
-        mae_s = "n/a" if (mae is None or (isinstance(mae, float) and math.isnan(mae))) else f"{mae:.3g} m"
-        mape_s = "n/a" if (mape is None or (isinstance(mape, float) and math.isnan(mape))) else f"{mape * 100.0:.1f}%"
+        mae_s = (
+            "n/a"
+            if (mae is None or (isinstance(mae, float) and math.isnan(mae)))
+            else f"{mae:.3g} m"
+        )
+        mape_s = (
+            "n/a"
+            if (mape is None or (isinstance(mape, float) and math.isnan(mape)))
+            else f"{mape * 100.0:.1f}%"
+        )
         bullets.append(
             f"- **Distance:** MAE {mae_s}, MAPE {mape_s} over "
             f"{int(dist.get('n', 0))} labeled samples."
@@ -154,10 +161,10 @@ def _verdict(metrics: Dict[str, dict]) -> List[str]:
 
 
 def build_report(
-    metrics: Dict[str, dict],
+    metrics: dict[str, dict],
     out_path: str,
     title: str = "CatRanger performance report",
-    thumbnails: Optional[List[str]] = None,
+    thumbnails: list[str] | None = None,
 ) -> str:
     """Write a clean markdown performance report and return its path.
 
@@ -165,7 +172,7 @@ def build_report(
     extra sections are rendered too (using their key as the header), so callers
     can attach e.g. a "reacquire" section without changing this function.
     """
-    lines: List[str] = [f"# {title}", ""]
+    lines: list[str] = [f"# {title}", ""]
 
     verdict = _verdict(metrics)
     if verdict:
@@ -215,7 +222,7 @@ def build_report(
     return out_path
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """CLI driver behind `make eval` (python -m catranger.eval.report).
 
     Runs the pipeline over a source, collects per-frame results/commands/times,
@@ -227,16 +234,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         prog="catranger.eval.report",
         description="Run CatRanger over a source and write the performance report",
     )
-    ap.add_argument("--source", required=True, help="image dir | image | video | rtsp url | webcam index")
+    ap.add_argument(
+        "--source", required=True, help="image dir | image | video | rtsp url | webcam index"
+    )
     ap.add_argument("--config", default="cat_distance", help="task config (configs/<name>.yaml)")
     ap.add_argument("--camera", default=None, help="override camera config (e.g. tapo_c211)")
     ap.add_argument("--approach", default="A", choices=["A", "B"], help="A=YOLO11, B=RT-DETR")
-    ap.add_argument("--classes", default=None,
-                    help="override classes: 'all', or comma-sep COCO ids (e.g. 15 cat). "
-                         "Use 'all' for the generic How-Far object stills.")
-    ap.add_argument("--no-depth", action="store_true", help="geometry only (no depth net; faster on CPU)")
-    ap.add_argument("--device", default=None,
-                    help="cuda | cpu | mps (governs the depth net + FP16/half selection)")
+    ap.add_argument(
+        "--classes",
+        default=None,
+        help="override classes: 'all', or comma-sep COCO ids (e.g. 15 cat). "
+        "Use 'all' for the generic How-Far object stills.",
+    )
+    ap.add_argument(
+        "--no-depth", action="store_true", help="geometry only (no depth net; faster on CPU)"
+    )
+    ap.add_argument(
+        "--device",
+        default=None,
+        help="cuda | cpu | mps (governs the depth net + FP16/half selection)",
+    )
     ap.add_argument("--stride", type=int, default=1, help="frame stride (video/stream)")
     ap.add_argument("--max-frames", type=int, default=0, help="cap frames (0=all)")
     ap.add_argument("--out", default="outputs/report/report.md", help="report output path")
@@ -252,23 +269,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.camera:
         app.camera = load_camera(args.camera)
     if args.classes is not None:
-        app.raw["classes"] = None if args.classes.lower() == "all" else [
-            int(c) for c in args.classes.split(",") if c.strip()
-        ]
+        app.raw["classes"] = (
+            None
+            if args.classes.lower() == "all"
+            else [int(c) for c in args.classes.split(",") if c.strip()]
+        )
 
     approach = "approach_a" if args.approach == "A" else "approach_b"
     ranger = CatRanger(app, approach=approach, use_depth=not args.no_depth, device=args.device)
     follower = Follower(app.get("follow", default={}))
 
-    results: List[FrameResult] = []
-    commands: List[Command] = []
-    frame_times: List[float] = []
+    results: list[FrameResult] = []
+    commands: list[Command] = []
+    frame_times: list[float] = []
 
-    print(f"[eval] source={args.source} camera={app.camera.name} approach={approach} "
-          f"depth={'off' if args.no_depth else 'on'}")
+    print(
+        f"[eval] source={args.source} camera={app.camera.name} approach={approach} "
+        f"depth={'off' if args.no_depth else 'on'}"
+    )
     if args.max_frames == 0 and (is_stream(args.source) or str(args.source).isdigit()):
-        print("[eval] warning: unbounded source (stream/webcam) with --max-frames 0 — every "
-              "frame is buffered in memory for aggregate metrics; pass --max-frames N to bound it.")
+        print(
+            "[eval] warning: unbounded source (stream/webcam) with --max-frames 0 — every "
+            "frame is buffered in memory for aggregate metrics; pass --max-frames N to bound it."
+        )
     for idx, frame in frame_source(args.source, stride=args.stride, max_frames=args.max_frames):
         t0 = time.perf_counter()
         result = ranger.process(frame, frame_index=idx)
@@ -287,8 +310,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     path = build_report(metrics, str(out), title=f"CatRanger performance report — {approach}")
-    print(f"[eval] {len(results)} frames | mean {float(metrics['fps'].get('mean_fps', 0.0)):.1f} FPS "
-          f"| wrote {path}")
+    print(
+        f"[eval] {len(results)} frames | mean {float(metrics['fps'].get('mean_fps', 0.0)):.1f} FPS "
+        f"| wrote {path}"
+    )
     return 0
 
 

@@ -26,7 +26,7 @@ needed if you want the *camera* to track instead of the *chassis*.
 
 from __future__ import annotations
 
-from typing import Iterator, Optional, Tuple
+from collections.abc import Iterator
 
 import numpy as np
 
@@ -61,7 +61,7 @@ class TapoCamera:
         """Full RTSP URL: rtsp://<user>:<pass>@<ip>:554/<stream>."""
         return f"rtsp://{self.user}:{self.pwd}@{self.ip}:554/{self.stream}"
 
-    def frames(self, stride: int = 1, max_frames: int = 0) -> Iterator[Tuple[int, np.ndarray]]:
+    def frames(self, stride: int = 1, max_frames: int = 0) -> Iterator[tuple[int, np.ndarray]]:
         """Yield (index, frame_bgr) from the live RTSP stream.
 
         Delegates to catranger.io.frame_source, which opens the stream with the
@@ -112,7 +112,7 @@ class TapoCamera:
 
     # ------------------------------------------------------------------ config
     @classmethod
-    def from_config(cls, cam_cfg: CameraConfig, user: str, pwd: str) -> "TapoCamera":
+    def from_config(cls, cam_cfg: CameraConfig, user: str, pwd: str) -> TapoCamera:
         """Build a TapoCamera from a CameraConfig whose `rtsp` field is a template
         like 'rtsp://USER:PASS@CAM_IP:554/stream1'. We parse the host and stream
         out of the template and inject the real credentials.

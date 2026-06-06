@@ -22,7 +22,7 @@ import argparse
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
@@ -32,13 +32,13 @@ DEFAULT_METRIC = "metrics/mAP50-95(B)"
 STABLE_WEIGHTS = _REPO_ROOT / "runs" / "train" / "best.pt"
 
 
-def _load_config(path: str) -> Dict[str, Any]:
+def _load_config(path: str) -> dict[str, Any]:
     p = Path(path)
     if not p.is_absolute():
         p = (_REPO_ROOT / p).resolve()
     if not p.exists():
         raise FileNotFoundError(f"train config not found: {p}")
-    with open(p, "r") as f:
+    with open(p) as f:
         return yaml.safe_load(f) or {}
 
 
@@ -54,7 +54,7 @@ def _read_metric(results: Any, metric_key: str) -> float:
     Ultralytics exposes `results.results_dict` keyed like 'metrics/mAP50-95(B)'.
     We fall back across a couple of aliases so a key typo never silently returns 0.
     """
-    rd: Dict[str, Any] = {}
+    rd: dict[str, Any] = {}
     if results is not None and hasattr(results, "results_dict"):
         rd = dict(results.results_dict or {})
     if metric_key in rd:
@@ -79,11 +79,11 @@ def _read_metric(results: Any, metric_key: str) -> float:
 
 
 def train_once(
-    cfg: Dict[str, Any],
-    overrides: Optional[Dict[str, Any]] = None,
-    name: Optional[str] = None,
-    epochs: Optional[int] = None,
-) -> Dict[str, Any]:
+    cfg: dict[str, Any],
+    overrides: dict[str, Any] | None = None,
+    name: str | None = None,
+    epochs: int | None = None,
+) -> dict[str, Any]:
     """Run one fine-tune and return {metric, metric_key, best_pt, name, args}.
 
     This is the single training primitive both the CLI and autoresearch.py call.
@@ -95,8 +95,7 @@ def train_once(
         from ultralytics import YOLO  # lazy: only needed to actually train
     except Exception as e:  # pragma: no cover - depends on env
         raise SystemExit(
-            "ultralytics not installed. `pip install ultralytics`\n"
-            f"  (original import error: {e})"
+            f"ultralytics not installed. `pip install ultralytics`\n  (original import error: {e})"
         )
 
     overrides = dict(overrides or {})
@@ -116,26 +115,28 @@ def train_once(
                 "  run `python -m catranger.train.prepare --config configs/train.yaml` first."
             )
 
-    train_args: Dict[str, Any] = {
+    train_args: dict[str, Any] = {
         "data": data_yaml,
         "epochs": int(epochs if epochs is not None else cfg.get("epochs", 40)),
         "imgsz": int(cfg.get("imgsz", 640)),
         "batch": int(cfg.get("batch", 16)),
-        "seed": int(cfg.get("seed", 0)),          # deterministic, comparable runs
+        "seed": int(cfg.get("seed", 0)),  # deterministic, comparable runs
         "deterministic": True,
         "device": cfg.get("device", 0),
         "project": _resolve(str(cfg.get("project", "runs/train"))),
         "name": name or str(cfg.get("name", "cat_finetune")),
         "patience": int(cfg.get("patience", 12)),
         "exist_ok": True,
-        "pretrained": True,                        # FINE-TUNE, never from scratch
+        "pretrained": True,  # FINE-TUNE, never from scratch
         "verbose": True,
     }
     # Hyperparameter overrides (lr0, mosaic, degrees, ...) win over the base args.
     train_args.update(overrides)
 
-    print(f"[train] fine-tune {base_model} -> {train_args['name']} "
-          f"(epochs={train_args['epochs']}, seed={train_args['seed']})")
+    print(
+        f"[train] fine-tune {base_model} -> {train_args['name']} "
+        f"(epochs={train_args['epochs']}, seed={train_args['seed']})"
+    )
     if overrides:
         print(f"[train] overrides: {overrides}")
 
@@ -159,7 +160,7 @@ def train_once(
     }
 
 
-def publish_weights(best_pt: str) -> Optional[Path]:
+def publish_weights(best_pt: str) -> Path | None:
     """Copy a run's best.pt to the stable path the project points at. Returns it,
     or None if the source is missing (e.g. a 0-epoch dry run)."""
     src = Path(best_pt)

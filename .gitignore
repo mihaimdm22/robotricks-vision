@@ -3,7 +3,6 @@
 venv/
 __pycache__/
 *.pyc
-*.egg-info/
 
 # data & model weights (large; not committed)
 data/
@@ -25,3 +24,12 @@ outputs/
 # tool state
 .gstack/
 .context/
+
+# python tooling
+*.egg-info/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

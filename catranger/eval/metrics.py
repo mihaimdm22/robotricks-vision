@@ -13,7 +13,7 @@ machine with no GPU / no torch installed.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence
+from collections.abc import Sequence
 
 # Types are stdlib-only dataclasses (catranger.types), safe to import eagerly.
 from catranger.types import Command, FrameResult
@@ -37,7 +37,7 @@ def _percentile(sorted_vals: Sequence[float], q: float) -> float:
     return float(sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac)
 
 
-def fps_stats(frame_times: List[float]) -> Dict[str, float]:
+def fps_stats(frame_times: list[float]) -> dict[str, float]:
     """Throughput stats from per-frame wall times (seconds).
 
     Returns {mean_fps, p50_ms, p95_ms, n}. Non-finite / non-positive frame
@@ -57,9 +57,9 @@ def fps_stats(frame_times: List[float]) -> Dict[str, float]:
     }
 
 
-def _frame_track_ids(result: FrameResult) -> List[int]:
+def _frame_track_ids(result: FrameResult) -> list[int]:
     """All non-None track ids present in a frame (one per observation)."""
-    ids: List[int] = []
+    ids: list[int] = []
     for obs in result.observations:
         tid = obs.track_id
         if tid is not None:
@@ -67,7 +67,7 @@ def _frame_track_ids(result: FrameResult) -> List[int]:
     return ids
 
 
-def track_stats(results: List[FrameResult]) -> Dict[str, object]:
+def track_stats(results: list[FrameResult]) -> dict[str, object]:
     """Track-continuity proxies derived purely from track ids across frames.
 
     Definitions (deliberately simple, no GT needed):
@@ -81,11 +81,11 @@ def track_stats(results: List[FrameResult]) -> Dict[str, object]:
                                  A proxy for "the followed cat's identity flipped".
     """
     seen_ids: set = set()
-    lifetime: Dict[int, int] = {}        # id -> total frames present
-    cur_streak: Dict[int, int] = {}      # id -> current consecutive run
-    best_streak: Dict[int, int] = {}     # id -> best consecutive run
+    lifetime: dict[int, int] = {}  # id -> total frames present
+    cur_streak: dict[int, int] = {}  # id -> current consecutive run
+    best_streak: dict[int, int] = {}  # id -> best consecutive run
 
-    prev_target_id: Optional[int] = None
+    prev_target_id: int | None = None
     id_switches = 0
 
     for res in results:
@@ -120,7 +120,7 @@ def track_stats(results: List[FrameResult]) -> Dict[str, object]:
     }
 
 
-def distance_mae(preds: List[float], gts: List[float]) -> Dict[str, float]:
+def distance_mae(preds: list[float], gts: list[float]) -> dict[str, float]:
     """Distance error vs ground truth (How Far).
 
     Returns {mae, mape, n}. Pairs where either value is non-finite, or the GT is
@@ -129,8 +129,8 @@ def distance_mae(preds: List[float], gts: List[float]) -> Dict[str, float]:
     """
     import math
 
-    abs_errs: List[float] = []
-    pct_errs: List[float] = []
+    abs_errs: list[float] = []
+    pct_errs: list[float] = []
     for p, g in zip(preds, gts):
         try:
             pf = float(p)
@@ -184,7 +184,7 @@ def _sign_changes(seq: Sequence[float], eps: float = 1e-6) -> int:
     return changes
 
 
-def smoothness(commands: List[Command]) -> Dict[str, object]:
+def smoothness(commands: list[Command]) -> dict[str, object]:
     """Command-smoothness metrics (the judges grade this explicitly, sec 4.4/8).
 
     Returns:
@@ -215,11 +215,11 @@ def smoothness(commands: List[Command]) -> Dict[str, object]:
 
 
 def synthetic_occlusion_reacquire(
-    pre_id: Optional[int] = None,
-    post_id: Optional[int] = None,
+    pre_id: int | None = None,
+    post_id: int | None = None,
     gap_frames: int = 0,
-    reacquired_frame: Optional[int] = None,
-) -> Dict[str, object]:
+    reacquired_frame: int | None = None,
+) -> dict[str, object]:
     """Re-acquire success after a *synthetic* full occlusion (sec 8).
 
     The harness blacks out a centered box for ~15 frames; this helper just scores
@@ -236,10 +236,8 @@ def synthetic_occlusion_reacquire(
     """
     if pre_id is None and post_id is None:
         return {}
-    reacquired = (
-        pre_id is not None and post_id is not None and int(pre_id) == int(post_id)
-    )
-    out: Dict[str, object] = {
+    reacquired = pre_id is not None and post_id is not None and int(pre_id) == int(post_id)
+    out: dict[str, object] = {
         "reacquired": bool(reacquired),
         "pre_id": None if pre_id is None else int(pre_id),
         "post_id": None if post_id is None else int(post_id),

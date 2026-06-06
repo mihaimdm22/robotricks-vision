@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from typing import Deque, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -24,7 +23,7 @@ _DEFAULT_FPS = 15.0
 _HISTORY_LEN = 15
 
 
-def _device_is_cuda(device: Optional[str]) -> bool:
+def _device_is_cuda(device: str | None) -> bool:
     """True only when inference runs on a CUDA GPU (where FP16/half is safe).
 
     FP16 is CUDA-only: passing half=True on CPU/MPS gives no speedup and crashes
@@ -51,7 +50,7 @@ class CatRanger:
         app: AppConfig,
         approach: str = "approach_a",
         use_depth: bool = True,
-        device: Optional[str] = None,
+        device: str | None = None,
     ):
         self.app = app
         self.approach = approach
@@ -96,9 +95,7 @@ class CatRanger:
             from catranger.depth import DepthNet  # lazy: pulls transformers only here
 
             net = DepthNet(
-                backend=depth_cfg.get(
-                    "backend", "depth_anything_v2_metric_indoor"
-                ),
+                backend=depth_cfg.get("backend", "depth_anything_v2_metric_indoor"),
                 device=device,
             )
             if net.available():
@@ -108,26 +105,24 @@ class CatRanger:
 
         # ---- distance estimator ----
         conformal_q = app.get("uncertainty", "conformal_q", default=None)
-        self.distance = DistanceEstimator(
-            self.camera, app.size_priors, conformal_q=conformal_q
-        )
+        self.distance = DistanceEstimator(self.camera, app.size_priors, conformal_q=conformal_q)
 
         # ---- per-track history for speed: track_id -> deque[(frame_index, center, Z)] ----
-        self._history: Dict[int, Deque[Tuple[int, Tuple[float, float], float]]] = {}
-        self._last_depth: Optional[np.ndarray] = None
-        self._last_depth_conf: Optional[np.ndarray] = None
+        self._history: dict[int, deque[tuple[int, tuple[float, float], float]]] = {}
+        self._last_depth: np.ndarray | None = None
+        self._last_depth_conf: np.ndarray | None = None
         self._last_t = time.perf_counter()
 
     # ---- helpers ----
     def _speed(
-        self, track_id: Optional[int], frame_index: int, center: Tuple[float, float], z: float
-    ) -> Optional[float]:
+        self, track_id: int | None, frame_index: int, center: tuple[float, float], z: float
+    ) -> float | None:
         """Approach speed in m/s (positive = closing). Uses d(Z)/dt over the track
         history with a ~15 FPS assumption for the time base."""
         if track_id is None or not np.isfinite(z):
             return None
         hist = self._history.setdefault(track_id, deque(maxlen=_HISTORY_LEN))
-        speed: Optional[float] = None
+        speed: float | None = None
         if hist:
             f0, _c0, z0 = hist[0]
             df = frame_index - f0
@@ -149,9 +144,7 @@ class CatRanger:
         self.last_undistorted = frame
         h, w = frame.shape[:2]
 
-        dets: List[Detection] = self.detector.track(
-            frame, tracker=self.tracker_name, persist=True
-        )
+        dets: list[Detection] = self.detector.track(frame, tracker=self.tracker_name, persist=True)
 
         # depth: run every Nth frame, cache otherwise
         depth_map = self._last_depth
@@ -163,7 +156,7 @@ class CatRanger:
                 depth_map, depth_conf = self._last_depth, self._last_depth_conf
             self._last_depth, self._last_depth_conf = depth_map, depth_conf
 
-        observations: List[CatObservation] = []
+        observations: list[CatObservation] = []
         for det in dets:
             dist: DistanceResult = self.distance.estimate(
                 det, depth_map=depth_map, depth_conf=depth_conf
@@ -188,17 +181,18 @@ class CatRanger:
                 del self._history[tid]
 
         # pairwise inter-object metric distances
-        inter_object: List[Tuple[int, int, float]] = []
+        inter_object: list[tuple[int, int, float]] = []
         usable = [
             o
             for o in observations
-            if o.track_id is not None
-            and o.distance is not None
-            and np.isfinite(o.distance.meters)
+            if o.track_id is not None and o.distance is not None and np.isfinite(o.distance.meters)
         ]
         for i in range(len(usable)):
             for j in range(i + 1, len(usable)):
                 a, b = usable[i], usable[j]
+                # all four are guaranteed non-None by the `usable` filter above
+                assert a.distance is not None and b.distance is not None
+                assert a.track_id is not None and b.track_id is not None
                 d = self.camera.inter_object_distance(
                     a.detection.center,
                     a.distance.meters,
