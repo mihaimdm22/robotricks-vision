@@ -1,0 +1,30 @@
+# CatRanger web control platform config. Numbers live here, never hard-coded.
+# Loaded by `catranger serve` (M2). Safe, hardware-free defaults: boots on a
+# DummyBridge + a sample/synthetic source with zero hardware and zero clicks.
+
+# --- server ---
+host: 0.0.0.0          # bind on all interfaces so a phone/laptop on the SAME LAN
+                       # can open http://<this-machine-ip>:<port>. Use 127.0.0.1
+                       # to restrict to this machine only.
+port: 8080
+# uvicorn MUST run single-worker, no reload: one RobotController = one writer to
+# the serial/BLE link (multiple workers would race the bridge).
+
+# --- video (MJPEG) ---
+fps_cap: 15            # cap the publish/encode rate; the Go2 streams ~15 FPS
+jpeg_quality: 80       # 1-100; lower = less bandwidth/latency on the LAN
+video_stale_ms: 1000   # if no fresh frame within this window, the UI shows "VIDEO STALE"
+
+# --- safety ---
+watchdog_timeout_s: 0.5   # MANUAL dead-man's switch: no heartbeat within this -> stop.
+                          # Raise it for laggy Wi-Fi (a phone on a flaky link).
+safe_stop_cm: 20          # mirror of the firmware hard-stop; surfaced in the UI.
+
+# --- defaults at boot (all overridable from the UI) ---
+default_model: yolo11s    # must exist in configs/models.yaml
+default_mode: IDLE        # never auto-arm motors on startup
+default_robot: dummy      # dummy | usb | bt | ble  (dummy = simulation, no hardware)
+default_camera: synthetic # clean hardware-free boot. Set to a webcam index "0",
+                          # a sample video path, or an rtsp:// url — or connect one
+                          # from the Connections tab. Falls back to synthetic if it
+                          # can't open, and the status reports the real source.

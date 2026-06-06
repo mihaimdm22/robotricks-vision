@@ -11,6 +11,7 @@ errors (with an install hint) when a detector is actually used.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -56,7 +57,7 @@ class Detector:
         self.imgsz = int(imgsz)
         self.half = bool(half)
         self.classes = list(classes) if classes is not None else None
-        self._model = None  # lazy
+        self._model: Any = None  # lazy; holds a ultralytics YOLO or RTDETR once loaded
 
     # ---- model loading (lazy / heavy import inside) ----
     def _load(self):

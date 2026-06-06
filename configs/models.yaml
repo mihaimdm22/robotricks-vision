@@ -1,0 +1,37 @@
+# CatRanger model registry — the profiles the web "Models" tab lists and hot-swaps.
+# The first / default profile is the COCO-pretrained baseline that ALWAYS runs
+# (CLAUDE.md law) and needs no fine-tuning. "Different datasets" = point `weights`
+# at a fine-tuned best.pt (see `catranger train`). Backends: yolo | rtdetr.
+#
+# Numbers/handles live here, never hard-coded (Karpathy rule 5).
+
+default: yolo11s
+
+models:
+  - id: yolo11s
+    name: "YOLO11s — COCO baseline"
+    backend: yolo
+    weights: yolo11s.pt        # bare handle: Ultralytics auto-downloads on first use
+    classes: [15]              # COCO 'cat'
+    tracker: botsort.yaml
+    dataset: "COCO (pretrained)"
+    notes: "Always-available baseline. Fast CNN. First run needs network to fetch weights."
+
+  - id: rtdetr-l
+    name: "RT-DETR-L — COCO baseline"
+    backend: rtdetr
+    weights: rtdetr-l.pt
+    classes: [15]
+    tracker: botsort.yaml
+    dataset: "COCO (pretrained)"
+    notes: "Transformer, NMS-free. Better in cluttered / occluded scenes."
+
+  # Example fine-tuned profile — uncomment and point at your run's best.pt:
+  # - id: cats-finetuned
+  #   name: "YOLO11s — low-angle cats (fine-tuned)"
+  #   backend: yolo
+  #   weights: runs/detect/train/weights/best.pt
+  #   classes: [0]             # single-class fine-tunes often remap cat -> id 0
+  #   tracker: botsort.yaml
+  #   dataset: "Roboflow low-angle cats"
+  #   notes: "Stretch fine-tune; only use if it beats the baseline on the frozen metric."

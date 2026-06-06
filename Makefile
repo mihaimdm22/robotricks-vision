@@ -16,6 +16,9 @@ install:             ## sync core + dev toolchain into .venv (uv creates the ven
 install-ml:          ## also install perception+depth deps (torch/ultralytics/transformers) — big
 	uv sync --extra ml
 
+install-web:         ## install the web control panel deps (fastapi/uvicorn) + ml for detection
+	uv sync --extra ml --extra web
+
 lock:                ## refresh uv.lock after changing dependencies
 	uv lock
 
@@ -24,6 +27,9 @@ data:                ## symlink the provided contest inference sets into data/ra
 
 doctor:              ## check which backends are installed + GPU
 	uv run python -m catranger.cli doctor
+
+serve:               ## launch the web control panel (http://localhost:8080)
+	uv run python -m catranger.cli serve
 
 demo:                ## run the demo on $(SOURCE) (default: provided how_far stills)
 	uv run python scripts/demo.py --source $(SOURCE) --approach $(APPROACH) --save outputs/demo

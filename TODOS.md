@@ -68,3 +68,10 @@ end-to-end; everything below is polish, hardware bring-up, or stretch.
 - [x] Eval metrics + auto performance-report generator. **Completed:** v0.1.0 (2026-06-06)
 - [x] Full audit + fact-checked research + per-challenge architecture docs. **Completed:** v0.1.0 (2026-06-06)
 - [x] Verified end-to-end on the provided Go2 data + shipped (PR #1). **Completed:** v0.1.0 (2026-06-06)
+
+## Web Control Platform (post-/autoplan, deferred / follow-ups)
+- [ ] **Eval tab** — implement (route runs catranger/eval, UI renders report.md). **Priority:** P2. Seam reserved in v1.
+- [ ] **Pre-vendor `yolo11s.pt`** for a fully-offline demo (first run currently needs network). **Priority:** P3.
+- [ ] **Device auto-discovery** in the Connections tab (v1 uses typed targets + hints). **Priority:** P3.
+- [ ] **Single-controller token** (v1 uses sticky E-stop + last-wins + "another client driving" banner). **Priority:** P3.
+- [ ] Not building (explicitly out of scope): auth/TLS/public exposure, WebRTC video, in-browser training/annotation, session record/replay, native mobile, multi-robot.

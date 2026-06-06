@@ -3,6 +3,7 @@
 catranger doctor                 # check env: which backends import, GPU, configs
 catranger info  [--config ...]   # print the resolved task + camera config
 catranger demo  -- <demo args>   # forwards to scripts/demo.py
+catranger serve [--config web] [--host H] [--port P]   # web control panel
 catranger prepare [--config configs/train.yaml]
 catranger train   [--config configs/train.yaml]
 catranger autoresearch [--config configs/train.yaml]
@@ -83,6 +84,49 @@ def cmd_demo(args) -> None:
     runpy.run_path(str(_REPO / "scripts" / "demo.py"), run_name="__main__")
 
 
+def cmd_serve(args) -> None:
+    # The web UI is optional: lazy-import so `catranger --help` works without it.
+    try:
+        import uvicorn
+    except Exception:
+        print(
+            "the web control panel needs the 'web' extra (and 'ml' for cat detection):\n"
+            "    uv sync --extra ml --extra web"
+        )
+        raise SystemExit(1) from None
+
+    import socket
+
+    from catranger.config import load_yaml
+    from catranger.web.runtime import RobotRuntime
+    from catranger.web.server import create_app
+
+    cfg = load_yaml(args.config) if args.config else {}
+    host = args.host or cfg.get("host", "0.0.0.0")
+    port = int(args.port or cfg.get("port", 8080))
+
+    # Preflight the port so the operator gets problem+fix, not a traceback.
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind(("" if host == "0.0.0.0" else host, port))
+    except OSError:
+        print(f"port {port} is already in use — choose another with --port, or stop that process")
+        raise SystemExit(1) from None
+    finally:
+        probe.close()
+
+    runtime = RobotRuntime(cfg)
+    if not runtime.perception_available:
+        print(
+            "[catranger] note: cat detection needs the 'ml' extra (uv sync --extra ml). "
+            "Running in teleop + video mode (manual drive works, no detection)."
+        )
+    app = create_app(runtime)
+    print(f"[catranger] serving on http://{host}:{port}  (open from any device on this LAN)")
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
 def _run_module(modname: str, rest) -> None:
     sys.argv = [modname] + rest
     runpy.run_module(modname, run_name="__main__")
@@ -115,6 +159,14 @@ def app() -> None:
     p_demo = sub.add_parser("demo", help="run the demo (forwards args to scripts/demo.py)")
     p_demo.add_argument("rest", nargs=argparse.REMAINDER)
     p_demo.set_defaults(fn=cmd_demo)
+
+    p_serve = sub.add_parser("serve", help="launch the web control panel")
+    p_serve.add_argument("--config", default="web", help="web config (configs/web.yaml)")
+    p_serve.add_argument("--host", default=None, help="override bind host (default from web.yaml)")
+    p_serve.add_argument(
+        "--port", default=None, type=int, help="override port (default from web.yaml)"
+    )
+    p_serve.set_defaults(fn=cmd_serve)
 
     for name, fn in (
         ("prepare", cmd_prepare),

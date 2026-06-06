@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CatRanger Control</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- PERSISTENT GLOBAL HEADER — present on every tab; carries the safety controls -->
+  <header id="topbar">
+    <div class="brand">CatRanger 🐈‍⬛</div>
+    <div id="simBanner" class="sim-banner sim">SIMULATION</div>
+    <div id="modeBadge" class="mode-badge mode-IDLE">IDLE</div>
+    <div class="spacer"></div>
+    <button id="resetBtn" class="btn reset hidden">ARM / RESET</button>
+    <button id="estopBtn" class="btn estop">■ E-STOP</button>
+  </header>
+
+  <!-- stop-reason banner: ALWAYS tells the operator WHY the robot is stopped -->
+  <div id="stopBanner" class="stop-banner hidden"></div>
+
+  <main>
+    <section class="video-col">
+      <div class="video-wrap">
+        <img id="video" src="/video" alt="live video" />
+        <div id="staleOverlay" class="stale-overlay hidden">VIDEO STALE — no fresh frames</div>
+      </div>
+      <!-- primary safety/telemetry strip (glanceable) -->
+      <div class="primary-strip">
+        <div class="stat"><span class="k">DISTANCE</span><span id="dist" class="v">—</span></div>
+        <div class="stat"><span class="k">GROUND TRUTH</span><span id="gt" class="v">—</span></div>
+        <div class="stat"><span class="k">TARGET</span><span id="target" class="v">—</span></div>
+      </div>
+      <!-- secondary diagnostics (small) -->
+      <div class="diag" id="diag">
+        <span id="fps">FPS —</span>
+        <span id="camPill" class="pill">camera —</span>
+        <span id="robotPill" class="pill">robot —</span>
+        <span id="modelPill" class="pill">model —</span>
+      </div>
+    </section>
+
+    <section class="panel-col">
+      <nav class="tabs">
+        <button class="tab active" data-tab="control">Control</button>
+        <button class="tab" data-tab="models">Models</button>
+        <button class="tab" data-tab="connections">Connections</button>
+        <button class="tab" data-tab="eval">Eval</button>
+      </nav>
+
+      <!-- CONTROL -->
+      <div class="tabpane active" data-pane="control">
+        <div class="modes">
+          <button class="btn mode-btn" data-mode="IDLE">IDLE</button>
+          <button class="btn mode-btn" data-mode="MANUAL">MANUAL</button>
+          <button class="btn mode-btn" data-mode="FOLLOW">FOLLOW</button>
+        </div>
+        <p class="hint" id="driveHint">Switch to MANUAL to drive. Hold a button or use W/A/S/D.</p>
+        <div id="drivepad" class="drivepad disabled">
+          <button class="dbtn" data-act="forward" style="grid-area:up">▲</button>
+          <button class="dbtn" data-act="left" style="grid-area:left">◀</button>
+          <button class="dbtn stop" data-act="stop" style="grid-area:mid">STOP</button>
+          <button class="dbtn" data-act="right" style="grid-area:right">▶</button>
+          <button class="dbtn" data-act="back" style="grid-area:down">▼</button>
+        </div>
+        <label class="slider">Speed <input id="speed" type="range" min="0.1" max="1" step="0.1" value="0.6" /></label>
+        <label class="slider">Camera pan <input id="pan" type="range" min="-1" max="1" step="0.05" value="0" /></label>
+      </div>
+
+      <!-- MODELS -->
+      <div class="tabpane" data-pane="models">
+        <p class="hint" id="modelHint">Hot-swap the detector. The baseline is always available.</p>
+        <ul id="modelList" class="model-list"></ul>
+      </div>
+
+      <!-- CONNECTIONS -->
+      <div class="tabpane" data-pane="connections">
+        <div class="conn-group">
+          <h3>Camera (wireless)</h3>
+          <input id="camSpec" type="text" placeholder="synthetic | 0 | rtsp://user:pass@ip:554/stream1" />
+          <button class="btn" id="camConnect">Connect</button>
+          <button class="btn ghost" id="camDisconnect">Use synthetic</button>
+          <div id="camMsg" class="conn-msg"></div>
+        </div>
+        <div class="conn-group">
+          <h3>Robot (Bluetooth / USB)</h3>
+          <select id="robotConn">
+            <option value="dummy">dummy (simulation)</option>
+            <option value="bt">bt — HC-05 SPP (9600)</option>
+            <option value="ble">ble — HM-10</option>
+            <option value="usb">usb — serial</option>
+          </select>
+          <input id="robotTarget" type="text" placeholder="/dev/cu.HC-05... or BLE address" />
+          <input id="robotBaud" type="number" value="115200" />
+          <button class="btn" id="robotConnect">Connect</button>
+          <button class="btn ghost" id="robotDisconnect">Disconnect</button>
+          <div id="robotMsg" class="conn-msg"></div>
+        </div>
+      </div>
+
+      <!-- EVAL (reserved) -->
+      <div class="tabpane" data-pane="eval">
+        <p class="hint">The eval tab is reserved for a follow-up. For now run
+          <code>make eval</code> from the CLI.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
