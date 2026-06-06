@@ -134,7 +134,7 @@ def create_app(runtime: Any) -> FastAPI:
                 str(exc),
                 "the client sent an unrecognized drive action",
                 "use one of: forward, back, left, right, pan, stop",
-            )  # type: ignore[return-value]
+            )
         return {"ok": True}
 
     @app.post("/api/mode")
@@ -148,7 +148,7 @@ def create_app(runtime: Any) -> FastAPI:
                 f"unknown mode {intent.mode!r}",
                 "mode must be IDLE, MANUAL, or FOLLOW",
                 "send one of IDLE|MANUAL|FOLLOW",
-            )  # type: ignore[return-value]
+            )
         if not ok:
             return _err(
                 "estopped",
@@ -156,7 +156,7 @@ def create_app(runtime: Any) -> FastAPI:
                 "the robot is in a latched emergency stop",
                 "press RESET/ARM to clear the E-stop, then switch mode",
                 status=409,
-            )  # type: ignore[return-value]
+            )
         return {"ok": True, "mode": target}
 
     @app.post("/api/estop")
@@ -185,7 +185,7 @@ def create_app(runtime: Any) -> FastAPI:
                 "the id is not in configs/models.yaml",
                 "GET /api/models for valid ids, or add it to configs/models.yaml",
                 status=404,
-            )  # type: ignore[return-value]
+            )
 
     @app.post("/api/camera/connect")
     def camera_connect(req: CameraConnect) -> dict:
