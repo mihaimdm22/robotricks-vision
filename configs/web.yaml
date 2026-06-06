@@ -15,6 +15,10 @@ fps_cap: 15            # cap the publish/encode rate; the Go2 streams ~15 FPS
 jpeg_quality: 80       # 1-100; lower = less bandwidth/latency on the LAN
 video_stale_ms: 1000   # if no fresh frame within this window, the UI shows "VIDEO STALE"
 
+# --- distance history (live chart + GET /api/history) ---
+history_db: outputs/history.sqlite3  # sqlite log of distance over time; survives restarts
+history_hz: 4                        # samples/sec persisted (live chart runs faster, in-memory)
+
 # --- safety ---
 watchdog_timeout_s: 0.5   # MANUAL dead-man's switch: no heartbeat within this -> stop.
                           # Raise it for laggy Wi-Fi (a phone on a flaky link).

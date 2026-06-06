@@ -3,13 +3,22 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b0710" />
   <title>CatRanger Control</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <!-- PERSISTENT GLOBAL HEADER — present on every tab; carries the safety controls -->
   <header id="topbar">
-    <div class="brand">CatRanger 🐈‍⬛</div>
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3.2" />
+          <path d="M12 2.5v2.4M12 19.1v2.4M21.5 12h-2.4M4.9 12H2.5M18.7 5.3l-1.7 1.7M7 17l-1.7 1.7M18.7 18.7 17 17M7 7 5.3 5.3" />
+        </svg>
+      </span>
+      <span>Cat<span class="grad">Ranger</span></span>
+    </div>
     <div id="simBanner" class="sim-banner sim">SIMULATION</div>
     <div id="modeBadge" class="mode-badge mode-IDLE">IDLE</div>
     <div class="spacer"></div>
@@ -38,6 +47,17 @@
         <span id="camPill" class="pill">camera —</span>
         <span id="robotPill" class="pill">robot —</span>
         <span id="modelPill" class="pill">model —</span>
+      </div>
+      <!-- live distance history (model estimate ± CI vs HC-SR04 ground truth) -->
+      <div class="chart-card">
+        <div class="chart-head">
+          <span class="chart-title">Distance history</span>
+          <span class="chart-legend">
+            <span class="lg lg-est">estimate ± CI</span>
+            <span class="lg lg-gt">HC-SR04</span>
+          </span>
+        </div>
+        <canvas id="distChart" aria-label="Distance over time chart"></canvas>
       </div>
     </section>
 
