@@ -5,7 +5,8 @@ APPROACH ?= A
 CONFIG   ?= cat_distance
 
 .PHONY: help install install-ml lock data doctor demo demo-video eval \
-        prepare train autoresearch lint format typecheck test check clean
+        prepare train autoresearch lint format typecheck test check clean \
+        web web-setup fetch-weights
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n", $$1, $$2}'
@@ -66,6 +67,16 @@ check:               ## everything CI runs: format-check, lint, types, tests
 	uv run ruff check catranger scripts tests
 	uv run mypy
 	uv run pytest
+
+web-setup:           ## install web console deps (Python web extra + pnpm)
+	uv sync --extra ml --extra web
+	pnpm install --dir apps/web
+
+web:                 ## run FastAPI + the Next.js console together (cross-platform)
+	uv run python scripts/web.py
+
+fetch-weights:       ## pre-download detector weights so the demo runs offline
+	uv run python scripts/fetch_weights.py
 
 clean:               ## remove generated outputs + tool caches
 	rm -rf outputs runs __pycache__ catranger/__pycache__ .pytest_cache .ruff_cache .mypy_cache

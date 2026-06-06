@@ -2,6 +2,50 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.3.0] - 2026-06-06
+
+Web platform M3 + M5, and the control console migrated to Next.js. The scored
+perception core (`intrinsics/distance/detect/depth/track/pipeline`) is untouched.
+
+### Added
+- **M3 — Eval tab**: run the eval pipeline from the browser over a recorded source
+  and render the report. `catranger/eval/report.py` now exposes a reusable
+  `run_eval_job()` (the single heavy eval path, shared by the CLI `make eval` and
+  the web); `catranger/web/eval_job.py` runs it in a background worker
+  (idle/running/done/error/cancelled, one-at-a-time, cooperative cancel). Routes
+  `POST /api/eval/run` · `GET /api/eval/status` · `GET /api/eval/report` ·
+  `POST /api/eval/cancel`. Refused unless the robot is IDLE (it is CPU/GPU-heavy).
+  Distance MAE/MAPE shows only when ground-truth labels are supplied.
+- **M5 — control-plane hardening**: a single-controller drive token
+  (`catranger/web/arbiter.py`) so one operator drives and others observe and can
+  request control; **E-stop and reset are never gated by the token**. Device
+  auto-discovery (`GET /api/robot/discover`, serial + BLE-availability). Offline
+  weights pre-fetch (`scripts/fetch_weights.py`, `make fetch-weights`).
+- **Next.js control console** (`apps/web`, `/console`): the full operator UI ported
+  from the vanilla panel into React with the design system — persistent safety
+  header (always-loud E-STOP), prioritized status banner, video pane with distinct
+  stale/unreachable states, telemetry strip that greys out on link loss, press-and-
+  hold drive pad (pointer-capture + window keyboard gated on focus + blur->stop),
+  Models / Connections / Eval tabs, observer lock + "request control". Talks
+  straight to FastAPI via `NEXT_PUBLIC_API_BASE` (no proxy); operational (non-glass)
+  design variant; landing CTAs now open `/console`.
+- **Cross-platform launcher** `scripts/web.py` + `make web` / `web-setup` (runs
+  FastAPI + Next.js together on Windows/macOS/Linux); `apps/web/.env.example`,
+  `.nvmrc`, Node `engines`.
+- Tests: `tests/test_web_arbiter.py`, `tests/test_web_eval_job.py`, and
+  eval/discovery/two-WS-arbitration route-contract cases in `tests/test_web_server.py`.
+
+### Changed
+- `catranger/web/server.py`: config-gated CORS (origins in `configs/web.yaml`), the
+  WebSocket gates drive/mode intents through the arbiter while leaving E-stop/reset
+  ungated, and telemetry is per-connection (`you_are_controller`). The legacy
+  vanilla panel + `/` mount are kept as a zero-Node demo fallback.
+- `configs/web.yaml`: `cors_origins`, `control_idle_timeout_s`.
+
+### Fixed
+- `tests/test_io.py`: natural-order assertion now uses `os.path.basename` so it
+  passes on Windows (back-slash paths), not just POSIX.
+
 ## [0.2.0] - 2026-06-06
 
 Repo hardening — the hack-a-ton entry is now a maintained project. No perception/geometry

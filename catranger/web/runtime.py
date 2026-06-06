@@ -17,12 +17,14 @@ import importlib.util
 import logging
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from catranger.types import Command, FrameResult
 from catranger.web.controller import Mode, RobotController, StopReason
+from catranger.web.eval_job import EvalJob
 from catranger.web.registry import ModelProfile, ModelRegistry
 
 
@@ -31,6 +33,24 @@ def _ml_available() -> bool:
         importlib.util.find_spec("ultralytics") is not None
         and importlib.util.find_spec("torch") is not None
     )
+
+
+def _is_stream_spec(spec: str) -> bool:
+    """True for rtsp/http(s) URLs — checked without importing the heavy io module."""
+    return "://" in spec
+
+
+def _eval_err(code: str, problem: str, cause: str, fix: str, status: int = 400) -> dict:
+    """Typed eval error mirroring the server's {ok, code, problem, cause, fix}
+    shape; `status` is carried so the route can map it to an HTTP code."""
+    return {
+        "ok": False,
+        "code": code,
+        "problem": problem,
+        "cause": cause,
+        "fix": fix,
+        "status": status,
+    }
 
 
 class RobotRuntime:
@@ -61,9 +81,15 @@ class RobotRuntime:
 
         self._jpeg: bytes | None = None
         self._jpeg_lock = threading.Lock()
+        # Guards self._source against the control thread reading it while a REST
+        # handler thread (connect_camera) swaps + closes it.
+        self._source_lock = threading.Lock()
         self._last_frame_ts = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+        # M3: one background eval job, started/polled from the Eval tab.
+        self.eval_job = EvalJob()
 
     # ------------------------------------------------------------- lifecycle
     def start(self) -> None:
@@ -94,16 +120,22 @@ class RobotRuntime:
         idx = 0
         while not self._stop.is_set():
             t0 = time.perf_counter()
-            frame = self._source.read() if self._source is not None else None
-            if frame is None:
-                self.controller.camera_connected = False
-                self.controller.apply(None, frame_index=idx)
-            else:
-                self.controller.camera_connected = True
-                self._last_frame_ts = time.perf_counter()
-                result, draw_frame = self._perceive(frame, idx)
-                cmd = self.controller.apply(result, frame_index=idx)
-                self._publish(self._encode(draw_frame, result, cmd))
+            try:
+                with self._source_lock:
+                    frame = self._source.read() if self._source is not None else None
+                if frame is None:
+                    self.controller.camera_connected = False
+                    self.controller.apply(None, frame_index=idx)
+                else:
+                    self.controller.camera_connected = True
+                    self._last_frame_ts = time.perf_counter()
+                    result, draw_frame = self._perceive(frame, idx)
+                    cmd = self.controller.apply(result, frame_index=idx)
+                    self._publish(self._encode(draw_frame, result, cmd))
+            except Exception:
+                # The control thread is the SOLE writer to the robot — a transient
+                # tick error (camera mid-swap, a bad frame) must never kill it.
+                logging.getLogger("catranger.web").exception("control loop tick failed")
             idx += 1
             self._pace(interval, t0)
 
@@ -176,6 +208,8 @@ class RobotRuntime:
                 "watchdog_timeout_s": self.controller.watchdog_timeout_s,
                 "safe_stop_cm": self.controller.safe_stop_cm,
                 "video_stale_ms": int(self.cfg.get("video_stale_ms", 1000)),
+                # M3: surface (don't hide) that eval is competing for CPU/GPU.
+                "eval_running": self.eval_job.running,
             }
         )
         return t
@@ -203,17 +237,21 @@ class RobotRuntime:
     def connect_camera(self, spec: str) -> dict:
         from catranger.web.sources import open_source
 
-        old = self._source
-        self._source = open_source(spec, width=self.width, height=self.height)
+        # Open the new source OUTSIDE the lock (it can be slow), then swap under
+        # the lock so the control thread never reads a half-swapped/closed source.
+        new = open_source(spec, width=self.width, height=self.height)
+        with self._source_lock:
+            old = self._source
+            self._source = new
         if old is not None:
             try:
-                old.close()
+                old.close()  # safe now: the loop reads `new` on its next tick
             except Exception:
                 pass
         # report the REAL source (e.g. "synthetic" on fallback), never the requested
         # spec — so the operator is never told a camera connected when it didn't.
-        self.camera_spec = self._source.label
-        fell_back = self._source.label == "synthetic" and spec not in ("synthetic", "")
+        self.camera_spec = new.label
+        fell_back = new.label == "synthetic" and spec not in ("synthetic", "")
         return {
             "ok": True,
             "label": self._source.label,
@@ -290,6 +328,104 @@ class RobotRuntime:
             tracker["name"] = profile.tracker
             app.raw["tracker"] = tracker
         return CatRanger(app, approach="_web", use_depth=False)
+
+    # --------------------------------------------------------------- eval (M3)
+    def start_eval(self, params: dict) -> dict:
+        """Validate + launch a background eval run. Returns {ok} or a typed error
+        dict {ok=False, code, problem, cause, fix}. Eval is heavy and competes for
+        CPU/GPU, so it is refused unless the robot is IDLE (never while driving)."""
+        source = str(params.get("source") or "").strip()
+        if not source:
+            return _eval_err(
+                "eval_bad_source",
+                "no eval source given",
+                "the Eval tab sent an empty source",
+                "enter an image dir, image, or video path (e.g. data/raw/how_far)",
+            )
+        if source.isdigit():
+            return _eval_err(
+                "eval_bad_source",
+                f"refusing to eval a live webcam (index {source})",
+                "a webcam source would fight the live control camera for the device",
+                "point eval at a recorded image dir or video file instead",
+            )
+        if not _is_stream_spec(source) and not Path(source).exists():
+            return _eval_err(
+                "eval_bad_source",
+                f"source not found: {source}",
+                "the path does not exist on the server",
+                "check the path; the provided set lives under data/raw/",
+            )
+        if not self.perception_available:
+            return _eval_err(
+                "eval_unavailable",
+                "eval needs the ml extra",
+                "torch/ultralytics are not installed",
+                "uv sync --extra ml, then restart the server",
+            )
+        if self.controller.mode != Mode.IDLE:
+            return _eval_err(
+                "eval_not_idle",
+                "switch to IDLE before running eval",
+                "eval is CPU/GPU-heavy and would starve the live control loop",
+                "set mode IDLE (or E-stop), then run eval",
+                status=409,
+            )
+        max_frames = max(0, int(params.get("max_frames") or 0))  # never negative
+        started = self.eval_job.start(
+            source=source,
+            config=self.app_config,
+            approach=str(params.get("approach", "A")),
+            classes=params.get("classes"),
+            use_depth=bool(params.get("use_depth", False)),
+            device=params.get("device"),
+            max_frames=max_frames,
+            gts=params.get("gts"),
+            # separate path from the CLI's `make eval` (outputs/report/report.md)
+            # so a concurrent CLI run can't clobber the web report mid-read.
+            out="outputs/report/web-eval.md",
+        )
+        if not started:
+            return _eval_err(
+                "eval_busy",
+                "an eval run is already in progress",
+                "only one eval job runs at a time",
+                "wait for it to finish (or cancel it) before starting another",
+                status=409,
+            )
+        return {"ok": True, "state": "running"}
+
+    def eval_status(self) -> dict:
+        return {"ok": True, **self.eval_job.status()}
+
+    def eval_result(self) -> dict | None:
+        return self.eval_job.result()
+
+    def cancel_eval(self) -> dict:
+        return {"ok": True, "cancelled": self.eval_job.cancel()}
+
+    # ----------------------------------------------------------- discovery (M5)
+    def discover_devices(self) -> dict:
+        """Best-effort device discovery for the Connections tab: serial ports
+        always, BLE only if bleak is installed. Never raises — an empty list with
+        a hint beats a traceback."""
+        serial_ports: list[dict] = []
+        try:
+            from serial.tools import list_ports
+
+            serial_ports = [
+                {"target": p.device, "label": p.description or p.device}
+                for p in list_ports.comports()
+            ]
+        except Exception:  # pyserial absent or platform quirk
+            serial_ports = []
+        ble_available = importlib.util.find_spec("bleak") is not None
+        return {
+            "ok": True,
+            "serial": serial_ports,
+            "ble_available": ble_available,
+            "hint": None if serial_ports else "no serial ports found — plug in the USB/BT adapter",
+        }
 
     # one-shot estop/reset proxies so the server never reaches past this facade
     def estop(self) -> None:

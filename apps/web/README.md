@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CatRanger web (Next.js)
 
-## Getting Started
+The web front-end: a marketing landing page (`/`) **and** the live robot control
+console (`/console`). The console talks to the Python FastAPI control plane
+(`catranger serve`) — Next.js owns all UI; Python owns the camera, YOLO, and the
+serial/BLE robot link.
 
-First, run the development server:
+> Heads up: this is a customized Next.js 16 / React 19. Read the matching guide
+> under `node_modules/next/dist/docs/` before changing framework code (see
+> `AGENTS.md`). Node ≥ 20.9 (`.nvmrc` pins 22).
+
+## Run it (two processes)
+
+The console needs the API running. Easiest — one command from the **repo root**:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+make web            # Unix
+# or, anywhere (Windows/macOS/Linux):
+uv run python scripts/web.py
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+That starts FastAPI on `:8080` and the Next.js dev server on `:3000`. Open
+http://localhost:3000/console.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Prefer two terminals? 
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+# terminal A (repo root)
+catranger serve                 # FastAPI control plane on :8080
 
-## Learn More
+# terminal B
+pnpm install                    # first time only
+pnpm dev                        # Next.js on :3000
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Configuration
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_BASE` | `http://localhost:8080` | Base URL of `catranger serve`. The REST calls, the MJPEG `<img>`, and the control WebSocket all derive from it. |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Copy `.env.example` → `.env.local` to override. For **phone / LAN** access set
+`NEXT_PUBLIC_API_BASE` to the host machine's LAN IP (e.g.
+`http://192.168.1.42:8080`), bind the API on `0.0.0.0` (the default in
+`configs/web.yaml`), and add that origin to `cors_origins` in `configs/web.yaml`.
 
-## Deploy on Vercel
+There is **no Next.js proxy/rewrite** in the path: the browser talks straight to
+FastAPI. This keeps the WebSocket (`/ws`) and MJPEG (`/video`) robust — a dev
+proxy's WS upgrade is flaky.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## What the console does
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Control** — IDLE / MANUAL / FOLLOW, press-and-hold drive (W/A/S/D or the
+  pad), release-to-stop, camera pan. E-STOP + ARM/RESET live in the persistent
+  header and are always reachable (even for observers).
+- **Single-controller token** — one operator drives; others are read-only
+  observers and can "Request control". E-stop is never gated by the token.
+- **Models** — hot-swap the detector.
+- **Connections** — connect a camera (synthetic / webcam / RTSP) or the robot
+  (USB / BT / BLE), with device auto-discovery.
+- **Eval** — run the eval pipeline over a recorded source and render the
+  performance report (FPS / tracking / smoothness; distance MAE when labels are
+  supplied). Refused unless the robot is IDLE (it's CPU/GPU-heavy).
+
+## Build
+
+```bash
+pnpm build      # production build (also runs TypeScript)
+pnpm lint       # ESLint
+```

@@ -22,6 +22,14 @@
   --color-line: rgba(255, 255, 255, 0.1);
   --color-line-strong: rgba(255, 255, 255, 0.16);
 
+  /* Console safety palette — RESERVED for operational state, never branding.
+   * Carried over from the vanilla panel so safety colors survive the port. */
+  --color-stop: #dc2626; /* E-stop / danger */
+  --color-warn: #d97706; /* degraded / watchdog / warn */
+  --color-ok: #16a34a; /* live / armed / ok */
+  --color-manual: #2563eb; /* MANUAL mode */
+  --color-follow: #16a34a; /* FOLLOW mode */
+
   --font-display: var(--font-display-src), "Space Grotesk", ui-sans-serif, sans-serif;
   --font-sans: var(--font-sans-src), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-mono-src), ui-monospace, "SFMono-Regular", monospace;
@@ -151,6 +159,52 @@
   }
   .glow-purple {
     box-shadow: 0 0 60px -10px color-mix(in oklab, var(--color-purple) 55%, transparent);
+  }
+
+  /* --------------------------------------------------------------- *
+   * Operational console: SOLID surfaces (no blur over live video),
+   * high-contrast, no idle animation near safety state. Deliberately
+   * NOT the marketing glass/glow.
+   * --------------------------------------------------------------- */
+  .op-surface {
+    background: var(--color-bg-2);
+    border: 1px solid var(--color-line);
+    border-radius: 14px;
+  }
+  .op-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.55rem 0.9rem;
+    border-radius: 10px;
+    border: 1px solid var(--color-line-strong);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--color-fg);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .op-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .op-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .op-btn[data-active="true"] {
+    border-color: var(--color-orange-bright);
+    background: color-mix(in oklab, var(--color-orange) 22%, transparent);
+  }
+  /* E-STOP: always loud, never dimmed by any lockout. */
+  .op-estop {
+    background: var(--color-stop);
+    border-color: var(--color-stop);
+    color: #fff;
+    font-weight: 700;
+  }
+  .op-estop:hover {
+    filter: brightness(1.1);
   }
 }
 
