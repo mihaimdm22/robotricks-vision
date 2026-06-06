@@ -29,13 +29,13 @@ export function LiveDistanceCard() {
       {/* header */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
-          <span className="size-2 rounded-full bg-truth animate-pulse-soft" />
+          <span className="size-2 rounded-full bg-dim" />
           <span className="font-mono text-xs uppercase tracking-[0.2em] text-muted">
-            Live distance
+            Example readout
           </span>
         </div>
         <span className="font-mono text-xs text-dim">
-          track #{trackId} · {catName}
+          sample · track #{trackId} · {catName}
         </span>
       </div>
 

@@ -1,5 +1,6 @@
 import { GradientButton, OutlinePill } from "@/components/ui";
 import { Reveal } from "@/components/reveal";
+import { RUN_LOCALLY } from "@/lib/content";
 
 export function CallToAction() {
   return (
@@ -21,12 +22,12 @@ export function CallToAction() {
               <span className="text-gradient">distance</span>.
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-pretty text-base text-muted">
-              Open the console, connect your camera and robot, and start a session.
-              The pretrained baseline runs out of the box — no training, no calibration
-              to get a first reading.
+              Run the console locally, connect your camera and robot, and start a
+              session. The pretrained baseline runs out of the box — no training, no
+              calibration to get a first reading.
             </p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <GradientButton href="/console">Open Console</GradientButton>
+              <GradientButton href={RUN_LOCALLY}>Run it locally</GradientButton>
               <OutlinePill href="#how">See the pipeline</OutlinePill>
             </div>
           </div>

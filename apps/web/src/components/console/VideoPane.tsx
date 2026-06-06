@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { VIDEO_URL } from "@/lib/api";
+import { videoURL } from "@/lib/api";
 import type { Telemetry } from "@/lib/useTelemetry";
 
 export function VideoPane({ telemetry }: { telemetry: Telemetry | null }) {
@@ -35,7 +35,7 @@ export function VideoPane({ telemetry }: { telemetry: Telemetry | null }) {
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         key={reloadKey}
-        src={`${VIDEO_URL}?k=${reloadKey}`}
+        src={`${videoURL()}?k=${reloadKey}`}
         alt="live robot video"
         className="h-full w-full object-contain"
         onLoad={() => setUnreachable(false)}

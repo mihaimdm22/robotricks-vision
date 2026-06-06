@@ -8,8 +8,9 @@
  * E-stop never does.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTelemetry } from "@/lib/useTelemetry";
+import { apiBase, buildDefaultBase, subscribeApiBase } from "@/lib/api";
 import { SafetyHeader } from "./SafetyHeader";
 import { StatusBanner } from "./StatusBanner";
 import { VideoPane } from "./VideoPane";
@@ -30,8 +31,31 @@ const TABS: { id: Tab; label: string }[] = [
 const MODES = ["IDLE", "MANUAL", "FOLLOW"] as const;
 
 export function Console() {
+  // The effective backend URL doubles as a remount key: when the operator saves a
+  // new Backend URL (Connections tab), the store notifies, this re-reads, the key
+  // changes, and ConsoleBody — with its telemetry WebSocket and MJPEG <img> —
+  // remounts against the new origin (R6).
+  //
+  // useSyncExternalStore is the sanctioned pattern for a localStorage-backed value:
+  // the server snapshot (buildDefaultBase) matches the SSR HTML (no hydration
+  // mismatch on VideoPane's <img src>), then it adopts the client snapshot.
+  const base = useSyncExternalStore(
+    subscribeApiBase,
+    () => apiBase(),
+    () => buildDefaultBase,
+  );
+  return <ConsoleBody key={base} />;
+}
+
+function ConsoleBody() {
   const { telemetry, link, nack, clearNack, send } = useTelemetry();
   const [tab, setTab] = useState<Tab>("control");
+
+  // Never received a frame and the link is down → almost certainly no reachable
+  // backend (vs a mid-session blip, where telemetry exists but is stale). Show the
+  // honest "runs locally" affordance instead of leaving the operator on the
+  // safety banner's misleading "reconnecting…" (R3).
+  const noBackend = !telemetry && link === "disconnected";
 
   // Auto-dismiss a nack toast after a few seconds.
   useEffect(() => {
@@ -47,6 +71,24 @@ export function Console() {
     <div className="min-h-screen bg-bg text-fg">
       <SafetyHeader telemetry={telemetry} link={link} />
       <StatusBanner telemetry={telemetry} link={link} />
+
+      {noBackend && (
+        <div
+          className="border-b border-line bg-white/[0.03] px-4 py-2 text-sm text-muted"
+          role="status"
+        >
+          No backend connected — this console runs locally. Start{" "}
+          <code className="font-mono text-fg">catranger serve</code>, or set a{" "}
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:text-fg"
+            onClick={() => setTab("connections")}
+          >
+            Backend URL
+          </button>{" "}
+          (Connections tab). See the README.
+        </div>
+      )}
 
       {nack && (
         <div className="border-b border-warn/40 bg-warn/15 px-4 py-2 text-sm text-warn" role="status">
