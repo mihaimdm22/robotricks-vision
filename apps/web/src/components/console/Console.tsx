@@ -45,7 +45,7 @@ export function Console() {
 
   return (
     <div className="min-h-screen bg-bg text-fg">
-      <SafetyHeader telemetry={telemetry} link={link} send={send} />
+      <SafetyHeader telemetry={telemetry} link={link} />
       <StatusBanner telemetry={telemetry} link={link} />
 
       {nack && (

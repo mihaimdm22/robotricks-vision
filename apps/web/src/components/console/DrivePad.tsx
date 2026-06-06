@@ -69,10 +69,15 @@ export function DrivePad({
     if (!drivableRef.current) return;
     send({ type: "intent", action, value: speedRef.current });
     if (driveTimer.current) clearInterval(driveTimer.current);
-    driveTimer.current = setInterval(
-      () => send({ type: "intent", action, value: speedRef.current }),
-      120,
-    );
+    driveTimer.current = setInterval(() => {
+      // Self-stop if control is lost mid-press (token taken, mode changed,
+      // E-stop) — a disabled pad button never fires pointerup.
+      if (!drivableRef.current) {
+        stopDrive();
+        return;
+      }
+      send({ type: "intent", action, value: speedRef.current });
+    }, 120);
   }
   function stopDrive() {
     if (driveTimer.current) clearInterval(driveTimer.current);

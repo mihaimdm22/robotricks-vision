@@ -81,6 +81,9 @@ class RobotRuntime:
 
         self._jpeg: bytes | None = None
         self._jpeg_lock = threading.Lock()
+        # Guards self._source against the control thread reading it while a REST
+        # handler thread (connect_camera) swaps + closes it.
+        self._source_lock = threading.Lock()
         self._last_frame_ts = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -117,16 +120,22 @@ class RobotRuntime:
         idx = 0
         while not self._stop.is_set():
             t0 = time.perf_counter()
-            frame = self._source.read() if self._source is not None else None
-            if frame is None:
-                self.controller.camera_connected = False
-                self.controller.apply(None, frame_index=idx)
-            else:
-                self.controller.camera_connected = True
-                self._last_frame_ts = time.perf_counter()
-                result, draw_frame = self._perceive(frame, idx)
-                cmd = self.controller.apply(result, frame_index=idx)
-                self._publish(self._encode(draw_frame, result, cmd))
+            try:
+                with self._source_lock:
+                    frame = self._source.read() if self._source is not None else None
+                if frame is None:
+                    self.controller.camera_connected = False
+                    self.controller.apply(None, frame_index=idx)
+                else:
+                    self.controller.camera_connected = True
+                    self._last_frame_ts = time.perf_counter()
+                    result, draw_frame = self._perceive(frame, idx)
+                    cmd = self.controller.apply(result, frame_index=idx)
+                    self._publish(self._encode(draw_frame, result, cmd))
+            except Exception:
+                # The control thread is the SOLE writer to the robot — a transient
+                # tick error (camera mid-swap, a bad frame) must never kill it.
+                logging.getLogger("catranger.web").exception("control loop tick failed")
             idx += 1
             self._pace(interval, t0)
 
@@ -228,17 +237,21 @@ class RobotRuntime:
     def connect_camera(self, spec: str) -> dict:
         from catranger.web.sources import open_source
 
-        old = self._source
-        self._source = open_source(spec, width=self.width, height=self.height)
+        # Open the new source OUTSIDE the lock (it can be slow), then swap under
+        # the lock so the control thread never reads a half-swapped/closed source.
+        new = open_source(spec, width=self.width, height=self.height)
+        with self._source_lock:
+            old = self._source
+            self._source = new
         if old is not None:
             try:
-                old.close()
+                old.close()  # safe now: the loop reads `new` on its next tick
             except Exception:
                 pass
         # report the REAL source (e.g. "synthetic" on fallback), never the requested
         # spec — so the operator is never told a camera connected when it didn't.
-        self.camera_spec = self._source.label
-        fell_back = self._source.label == "synthetic" and spec not in ("synthetic", "")
+        self.camera_spec = new.label
+        fell_back = new.label == "synthetic" and spec not in ("synthetic", "")
         return {
             "ok": True,
             "label": self._source.label,
@@ -358,7 +371,7 @@ class RobotRuntime:
                 "set mode IDLE (or E-stop), then run eval",
                 status=409,
             )
-        max_frames = int(params.get("max_frames") or 0)
+        max_frames = max(0, int(params.get("max_frames") or 0))  # never negative
         started = self.eval_job.start(
             source=source,
             config=self.app_config,
@@ -368,6 +381,9 @@ class RobotRuntime:
             device=params.get("device"),
             max_frames=max_frames,
             gts=params.get("gts"),
+            # separate path from the CLI's `make eval` (outputs/report/report.md)
+            # so a concurrent CLI run can't clobber the web report mid-read.
+            out="outputs/report/web-eval.md",
         )
         if not started:
             return _eval_err(

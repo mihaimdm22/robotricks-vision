@@ -9,6 +9,7 @@
  */
 
 import Link from "next/link";
+import { api } from "@/lib/api";
 import type { Telemetry, LinkState } from "@/lib/useTelemetry";
 
 const MODE_COLOR: Record<string, string> = {
@@ -20,11 +21,9 @@ const MODE_COLOR: Record<string, string> = {
 export function SafetyHeader({
   telemetry,
   link,
-  send,
 }: {
   telemetry: Telemetry | null;
   link: LinkState;
-  send: (obj: Record<string, unknown>) => void;
 }) {
   const estop = !!telemetry?.estop;
   const mode = telemetry?.mode ?? "IDLE";
@@ -61,12 +60,20 @@ export function SafetyHeader({
 
       <div className="flex-1" />
 
+      {/* E-STOP / RESET go over REST, not the WS: fetch() works even while the
+          telemetry socket is down (where send() would silently no-op) — the one
+          moment you most need the stop to land. */}
       {estop && (
-        <button type="button" className="op-btn" style={{ borderColor: "var(--color-ok)" }} onClick={() => send({ type: "reset" })}>
+        <button
+          type="button"
+          className="op-btn"
+          style={{ borderColor: "var(--color-ok)" }}
+          onClick={() => api.reset()}
+        >
           ARM / RESET
         </button>
       )}
-      <button type="button" className="op-btn op-estop" onClick={() => send({ type: "estop" })}>
+      <button type="button" className="op-btn op-estop" onClick={() => api.estop()}>
         ■ E-STOP
       </button>
     </header>
