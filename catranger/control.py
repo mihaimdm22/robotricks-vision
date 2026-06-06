@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Dict, Optional
+from collections.abc import Callable
 
 from catranger.types import Command, FrameResult
 
@@ -49,7 +49,10 @@ def _clamp(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
 class Follower:
     """Stateful P-controller that turns per-frame perception into a smooth Command."""
 
-    def __init__(self, follow_cfg: Dict):
+    def __init__(self, follow_cfg: dict, clock: Callable[[], float] = time.perf_counter):
+        # Injectable monotonic clock; defaults to the real one. Tests pass a fake
+        # so the COAST/SEARCH lost-timeout logic is deterministic and exercisable.
+        self._clock = clock
         cfg = follow_cfg or {}
         self.setpoint = float(cfg.get("setpoint_distance_m", 1.5))
         self.kp_rot = float(cfg.get("kp_rot", 1.2))
@@ -67,11 +70,11 @@ class Follower:
 
     def reset(self) -> None:
         # per-channel smoothing state
-        self.u_prev: Dict[str, float] = {"rotation": 0.0, "v_fwd": 0.0}
+        self.u_prev: dict[str, float] = {"rotation": 0.0, "v_fwd": 0.0}
         self.state = "SEARCH"
-        self.target_id: Optional[int] = None
+        self.target_id: int | None = None
         self._acquire_count = 0
-        self._last_seen_t: Optional[float] = None
+        self._last_seen_t: float | None = None
         self._last_bearing_rad = 0.0  # last observed bearing, for SEARCH sweep
         self._coast_cmd = Command(state="SEARCH")
 
@@ -85,16 +88,12 @@ class Follower:
         return u
 
     def step(self, result: FrameResult) -> Command:
-        now = time.perf_counter()
+        now = self._clock()
         target = result.target if result is not None else None
 
         # ---------------- no target -> COAST then SEARCH ----------------
-        if target is None or target.distance is None or not math.isfinite(
-            target.distance.meters
-        ):
-            elapsed = (
-                (now - self._last_seen_t) if self._last_seen_t is not None else None
-            )
+        if target is None or target.distance is None or not math.isfinite(target.distance.meters):
+            elapsed = (now - self._last_seen_t) if self._last_seen_t is not None else None
             if elapsed is not None and elapsed <= self.lost_timeout_s:
                 # COAST: decay the last command toward zero
                 rot = _clamp(self.u_prev.get("rotation", 0.0) * 0.8)
@@ -121,7 +120,6 @@ class Follower:
 
         # ---------------- have a target ----------------
         det = target.detection
-        cx = det.center[0]
         # bearing: prefer the precomputed bearing_deg, convert to radians
         bearing_rad = math.radians(target.bearing_deg)
         self._last_bearing_rad = bearing_rad

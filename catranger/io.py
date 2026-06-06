@@ -14,15 +14,15 @@ where frames come from.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator, Tuple
 
 import numpy as np
 
 try:
     import cv2
 except Exception:  # pragma: no cover
-    cv2 = None
+    cv2 = None  # type: ignore[assignment]
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
@@ -37,7 +37,9 @@ def is_stream(source: str) -> bool:
     return str(source).lower().startswith(("rtsp://", "http://", "https://", "udp://"))
 
 
-def frame_source(source: str, stride: int = 1, max_frames: int = 0) -> Iterator[Tuple[int, np.ndarray]]:
+def frame_source(
+    source: str, stride: int = 1, max_frames: int = 0
+) -> Iterator[tuple[int, np.ndarray]]:
     """Yield (index, frame_bgr). `stride` skips frames (video/stream only);
     `max_frames` caps the count (0 = unlimited)."""
     _require_cv2()

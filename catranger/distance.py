@@ -14,7 +14,7 @@ Pure numpy. No heavy deps.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -46,17 +46,17 @@ class DistanceEstimator:
     def __init__(
         self,
         camera: CameraModel,
-        size_priors: Dict[str, Dict],
-        conformal_q: Optional[float] = None,
+        size_priors: dict[str, dict],
+        conformal_q: float | None = None,
     ):
         self.camera = camera
         self.size_priors = size_priors or {}
         self.conformal_q = conformal_q
         # per-class multiplicative correction (filled by calibrate_scale)
-        self.alpha: Dict[str, float] = {}
+        self.alpha: dict[str, float] = {}
 
     # ---- geometry ----
-    def _geometry(self, det: Detection) -> Tuple[float, Optional[Tuple[float, float]]]:
+    def _geometry(self, det: Detection) -> tuple[float, tuple[float, float] | None]:
         """Return (Z_geo, range_m) using the per-class size prior. range_m is the
         prior's [lo, hi] real-size band used later for an uncertainty spread."""
         prior = self.size_priors.get(det.cls_name)
@@ -65,7 +65,7 @@ class DistanceEstimator:
         cue = str(prior.get("cue", "height")).lower()
         real_m = float(prior.get("real_m", 0.0))
         rng = prior.get("range_m")
-        rng_t: Optional[Tuple[float, float]] = None
+        rng_t: tuple[float, float] | None = None
         if rng and len(rng) == 2:
             rng_t = (float(rng[0]), float(rng[1]))
         if real_m <= 0:
@@ -79,9 +79,7 @@ class DistanceEstimator:
             z = alpha * z
         return float(z), rng_t
 
-    def _geometry_spread(
-        self, det: Detection, rng_t: Optional[Tuple[float, float]]
-    ) -> float:
+    def _geometry_spread(self, det: Detection, rng_t: tuple[float, float] | None) -> float:
         """Distance spread implied by the prior's real-size range_m (the same pixel
         extent at the size-band edges gives a near/far distance bracket)."""
         prior = self.size_priors.get(det.cls_name)
@@ -104,9 +102,9 @@ class DistanceEstimator:
     def _depth(
         self,
         det: Detection,
-        depth_map: Optional[np.ndarray],
-        depth_conf: Optional[np.ndarray],
-    ) -> Tuple[float, float]:
+        depth_map: np.ndarray | None,
+        depth_conf: np.ndarray | None,
+    ) -> tuple[float, float]:
         """Robust median depth inside the box plus a confidence weight."""
         if depth_map is None:
             return float("nan"), 0.0
@@ -141,8 +139,8 @@ class DistanceEstimator:
     def estimate(
         self,
         det: Detection,
-        depth_map: Optional[np.ndarray] = None,
-        depth_conf: Optional[np.ndarray] = None,
+        depth_map: np.ndarray | None = None,
+        depth_conf: np.ndarray | None = None,
     ) -> DistanceResult:
         cx, cy = det.center
         prior = self.size_priors.get(det.cls_name, {})
@@ -154,8 +152,8 @@ class DistanceEstimator:
         have_geo = np.isfinite(z_geo) and z_geo > 0
         have_depth = np.isfinite(z_depth) and z_depth > 0
 
-        values: List[float] = []
-        weights: List[float] = []
+        values: list[float] = []
+        weights: list[float] = []
         if have_geo:
             w_geo = max(0.0, geo_weight) * self.camera.centering_weight(cx, cy)
             # guard: if the prior weight is zero but geometry is all we have, give it a floor
@@ -215,16 +213,14 @@ class DistanceEstimator:
             },
         )
 
-    def calibrate_scale(
-        self, samples: Sequence[Tuple[str, float, float]]
-    ) -> Dict[str, float]:
+    def calibrate_scale(self, samples: Sequence[tuple[str, float, float]]) -> dict[str, float]:
         """Per-class multiplicative scale alpha_c = median(gt / pred).
 
         `samples` is a list of (cls_name, pred_meters, gt_meters). Returns the
         fitted alpha dict and also stores it on the estimator so subsequent
         estimate() calls apply the correction to the geometry term.
         """
-        by_cls: Dict[str, List[float]] = {}
+        by_cls: dict[str, list[float]] = {}
         for cls_name, pred, gt in samples:
             try:
                 pred_f = float(pred)
@@ -234,7 +230,7 @@ class DistanceEstimator:
             if not (np.isfinite(pred_f) and np.isfinite(gt_f)) or pred_f <= 0:
                 continue
             by_cls.setdefault(str(cls_name), []).append(gt_f / pred_f)
-        alpha: Dict[str, float] = {}
+        alpha: dict[str, float] = {}
         for cls_name, ratios in by_cls.items():
             arr = np.asarray(ratios, dtype=np.float64)
             arr = arr[np.isfinite(arr) & (arr > 0)]

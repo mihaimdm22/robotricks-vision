@@ -13,15 +13,14 @@ Typical use from the eval script:
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional
 
-from catranger.types import Command, FrameResult
 from catranger.eval.metrics import (
     distance_mae,
     fps_stats,
     smoothness,
     track_stats,
 )
+from catranger.types import Command, FrameResult
 
 # Pretty labels + how to render each metric key. Anything not listed falls back
 # to a plain str() with 4-dp rounding for floats.
@@ -61,11 +60,11 @@ _PERCENT_KEYS = {"mape"}
 
 
 def run_eval(
-    results: List[FrameResult],
-    commands: List[Command],
-    frame_times: List[float],
-    gts: Optional[Dict[str, List[float]]] = None,
-) -> Dict[str, dict]:
+    results: list[FrameResult],
+    commands: list[Command],
+    frame_times: list[float],
+    gts: dict[str, list[float]] | None = None,
+) -> dict[str, dict]:
     """Assemble every metric dict from raw per-frame outputs.
 
     Args:
@@ -77,7 +76,7 @@ def run_eval(
 
     Returns a nested dict keyed by section name; pass straight to build_report().
     """
-    metrics: Dict[str, dict] = {
+    metrics: dict[str, dict] = {
         "fps": fps_stats(frame_times),
         "tracking": track_stats(results),
         "smoothness": smoothness(commands),
@@ -101,7 +100,7 @@ def _fmt_value(key: str, value: object) -> str:
     return str(value)
 
 
-def _metric_table(section: Dict[str, object]) -> List[str]:
+def _metric_table(section: dict[str, object]) -> list[str]:
     """Render one metric dict as a 2-column markdown table."""
     lines = ["| Metric | Value |", "| --- | --- |"]
     for key, value in section.items():
@@ -110,9 +109,9 @@ def _metric_table(section: Dict[str, object]) -> List[str]:
     return lines
 
 
-def _verdict(metrics: Dict[str, dict]) -> List[str]:
+def _verdict(metrics: dict[str, dict]) -> list[str]:
     """A short headline so the report leads with the graded numbers."""
-    bullets: List[str] = []
+    bullets: list[str] = []
     fps = metrics.get("fps", {})
     if fps.get("n"):
         mean_fps = float(fps.get("mean_fps", 0.0))
@@ -141,8 +140,16 @@ def _verdict(metrics: Dict[str, dict]) -> List[str]:
     if dist and dist.get("n"):
         mae = dist.get("mae")
         mape = dist.get("mape")
-        mae_s = "n/a" if (mae is None or (isinstance(mae, float) and math.isnan(mae))) else f"{mae:.3g} m"
-        mape_s = "n/a" if (mape is None or (isinstance(mape, float) and math.isnan(mape))) else f"{mape * 100.0:.1f}%"
+        mae_s = (
+            "n/a"
+            if (mae is None or (isinstance(mae, float) and math.isnan(mae)))
+            else f"{mae:.3g} m"
+        )
+        mape_s = (
+            "n/a"
+            if (mape is None or (isinstance(mape, float) and math.isnan(mape)))
+            else f"{mape * 100.0:.1f}%"
+        )
         bullets.append(
             f"- **Distance:** MAE {mae_s}, MAPE {mape_s} over "
             f"{int(dist.get('n', 0))} labeled samples."
@@ -151,10 +158,10 @@ def _verdict(metrics: Dict[str, dict]) -> List[str]:
 
 
 def build_report(
-    metrics: Dict[str, dict],
+    metrics: dict[str, dict],
     out_path: str,
     title: str = "CatRanger performance report",
-    thumbnails: Optional[List[str]] = None,
+    thumbnails: list[str] | None = None,
 ) -> str:
     """Write a clean markdown performance report and return its path.
 
@@ -162,7 +169,7 @@ def build_report(
     extra sections are rendered too (using their key as the header), so callers
     can attach e.g. a "reacquire" section without changing this function.
     """
-    lines: List[str] = [f"# {title}", ""]
+    lines: list[str] = [f"# {title}", ""]
 
     verdict = _verdict(metrics)
     if verdict:

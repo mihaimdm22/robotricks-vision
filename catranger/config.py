@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
@@ -18,7 +18,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _CONFIG_DIR = _REPO_ROOT / "configs"
 
 
-def load_yaml(path: str | os.PathLike) -> Dict[str, Any]:
+def load_yaml(path: str | os.PathLike) -> dict[str, Any]:
     p = Path(path)
     if not p.is_absolute() and not p.exists():
         # allow bare names like "go2_1080p" or "cat_distance"
@@ -30,7 +30,7 @@ def load_yaml(path: str | os.PathLike) -> Dict[str, Any]:
                     break
             if p.exists():
                 break
-    with open(p, "r") as f:
+    with open(p) as f:
         return yaml.safe_load(f) or {}
 
 
@@ -44,13 +44,13 @@ class CameraConfig:
     width: int
     height: int
     fov_deg: float = 120.0
-    dist_model: str = "fov"          # "fov" (one-param division model) | "none"
-    mount_height_m: float = 0.30     # camera height above the floor (Go2 dog's-eye)
+    dist_model: str = "fov"  # "fov" (one-param division model) | "none"
+    mount_height_m: float = 0.30  # camera height above the floor (Go2 dog's-eye)
     needs_calibration: bool = False  # True for the Tapo until re-anchored
-    rtsp: Optional[str] = None       # stream URL template for live cameras
+    rtsp: str | None = None  # stream URL template for live cameras
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "CameraConfig":
+    def from_dict(cls, d: dict[str, Any]) -> CameraConfig:
         return cls(
             name=d.get("name", "camera"),
             fx=float(d["fx"]),
@@ -76,7 +76,7 @@ def load_camera(name_or_path: str = "go2_1080p") -> CameraConfig:
 class AppConfig:
     """Task config (detector, tracker, depth, follow, size priors). Loose by design."""
 
-    raw: Dict[str, Any]
+    raw: dict[str, Any]
     camera: CameraConfig
 
     def get(self, *keys: str, default: Any = None) -> Any:
@@ -89,11 +89,11 @@ class AppConfig:
 
     # convenience accessors used across the codebase
     @property
-    def size_priors(self) -> Dict[str, Dict[str, Any]]:
+    def size_priors(self) -> dict[str, dict[str, Any]]:
         return self.raw.get("size_priors", {})
 
     @property
-    def classes(self) -> Optional[list]:
+    def classes(self) -> list | None:
         return self.raw.get("classes")
 
 

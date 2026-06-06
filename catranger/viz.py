@@ -5,14 +5,13 @@ vector arrow, and the controller state + FPS. Pure cv2/numpy. Returns a copy.
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple
 
 import numpy as np
 
 try:
     import cv2
 except Exception:  # pragma: no cover
-    cv2 = None
+    cv2 = None  # type: ignore[assignment]
 
 from catranger.types import Command, FrameResult
 
@@ -33,7 +32,7 @@ def _put(img, text, org, color, scale=0.6, thick=2):
 def draw(
     frame_bgr: np.ndarray,
     result: FrameResult,
-    command: Optional[Command] = None,
+    command: Command | None = None,
 ) -> np.ndarray:
     """Return an annotated copy of `frame_bgr`."""
     if frame_bgr is None:
@@ -46,13 +45,11 @@ def draw(
     target = result.target if result is not None else None
     target_id = target.track_id if target is not None else None
 
-    for obs in (result.observations if result is not None else []):
+    for obs in result.observations if result is not None else []:
         det = obs.detection
         x1, y1, x2, y2 = (int(round(v)) for v in det.xyxy)
         is_target = (
-            target is not None
-            and det.track_id is not None
-            and det.track_id == target_id
+            target is not None and det.track_id is not None and det.track_id == target_id
         ) or (target is not None and obs is target)
         color = _GREEN if is_target else _YELLOW
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 2 if is_target else 1)
@@ -78,7 +75,7 @@ def draw(
     # inter-object distances (top-left list)
     if result is not None and result.inter_object:
         oy = 90
-        for (ia, ib, d) in result.inter_object[:5]:
+        for ia, ib, d in result.inter_object[:5]:
             _put(img, f"{ia}<->{ib}: {d:.2f}m", (12, oy), _CYAN, scale=0.5, thick=1)
             oy += 20
 
@@ -94,9 +91,7 @@ def draw(
         cv2.arrowedLine(img, (cx, cy), (ex, ey), acolor, 3, tipLength=0.25)
 
     # HUD: state + fps + command summary
-    state = command.state if command is not None else (
-        "TRACK" if target is not None else "SEARCH"
-    )
+    state = command.state if command is not None else ("TRACK" if target is not None else "SEARCH")
     fps = result.fps if result is not None else 0.0
     _put(img, f"{state}  {fps:4.1f} FPS", (12, 28), _WHITE, scale=0.7, thick=2)
     if command is not None:

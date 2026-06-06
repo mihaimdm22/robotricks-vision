@@ -34,7 +34,9 @@ def link(src: Path, dst: Path) -> None:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--contest", default=str(DEFAULT_CONTEST), help="path to inference_sets_contest")
+    ap.add_argument(
+        "--contest", default=str(DEFAULT_CONTEST), help="path to inference_sets_contest"
+    )
     ap.add_argument("--cat-url", default=None, help="optional public cat video to fetch via yt-dlp")
     args = ap.parse_args()
 
@@ -48,9 +50,7 @@ def main():
         out = DATA / "cat_demo.mp4"
         print(f"Fetching cat demo clip -> {out}")
         try:
-            subprocess.run(
-                ["yt-dlp", "-f", "mp4", args.cat_url, "-o", str(out)], check=True
-            )
+            subprocess.run(["yt-dlp", "-f", "mp4", args.cat_url, "-o", str(out)], check=True)
         except FileNotFoundError:
             print("  yt-dlp not installed: pip install yt-dlp", file=sys.stderr)
         except subprocess.CalledProcessError as e:

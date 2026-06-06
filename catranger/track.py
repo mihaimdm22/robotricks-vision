@@ -10,8 +10,6 @@ docs/research/cat-tracker.md sec 4.4 (5) hysteresis and (6) coasting.
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 import numpy as np
 
 from catranger.detect import Detector
@@ -45,21 +43,19 @@ class CatTracker:
 
     def reset(self) -> None:
         """Clear all lock/coast state (call between independent clips)."""
-        self.locked_id: Optional[int] = None
-        self._challenger_id: Optional[int] = None
+        self.locked_id: int | None = None
+        self._challenger_id: int | None = None
         self._challenger_count: int = 0
         # last Detection we returned as the target, for coasting across a missed frame
-        self._last_target: Optional[Detection] = None
+        self._last_target: Detection | None = None
         self._coast_frames: int = 0
 
     # ---- per-frame ----
-    def update(self, frame_bgr: np.ndarray) -> List[Detection]:
+    def update(self, frame_bgr: np.ndarray) -> list[Detection]:
         """Detect + track on this frame -> all current detections (track ids set)."""
-        return self.detector.track(
-            frame_bgr, tracker=self.tracker_name, persist=True
-        )
+        return self.detector.track(frame_bgr, tracker=self.tracker_name, persist=True)
 
-    def select_target(self, dets: List[Detection]) -> Optional[Detection]:
+    def select_target(self, dets: list[Detection]) -> Detection | None:
         """Pick the followed cat from this frame's detections with hysteresis + coast.
 
         Returns the locked Detection for this frame, the coasted last detection if the
@@ -140,7 +136,7 @@ class CatTracker:
         return locked_det
 
     # ---- hysteresis bookkeeping ----
-    def _accumulate_challenger(self, candidate_id: Optional[int]) -> None:
+    def _accumulate_challenger(self, candidate_id: int | None) -> None:
         if candidate_id is None:
             self._challenger_id = None
             self._challenger_count = 0

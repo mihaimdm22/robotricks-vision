@@ -7,15 +7,15 @@ numpy+opencv+pyyaml. Perception/depth/training backends are imported lazily so
 
 __version__ = "0.1.0"
 
+from catranger.config import AppConfig, CameraConfig, load_app, load_camera, load_yaml
+from catranger.intrinsics import CameraModel
 from catranger.types import (
+    CatObservation,
+    Command,
     Detection,
     DistanceResult,
-    CatObservation,
     FrameResult,
-    Command,
 )
-from catranger.config import CameraConfig, AppConfig, load_camera, load_app, load_yaml
-from catranger.intrinsics import CameraModel
 
 __all__ = [
     "Detection",

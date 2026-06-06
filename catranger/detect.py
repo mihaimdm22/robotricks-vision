@@ -10,7 +10,7 @@ errors (with an install hint) when a detector is actually used.
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -20,8 +20,7 @@ from catranger.types import Detection
 COCO_CAT_ID = 15
 
 _INSTALL_HINT = (
-    "ultralytics is required for detection (pip install ultralytics). "
-    "Original import error: {err}"
+    "ultralytics is required for detection (pip install ultralytics). Original import error: {err}"
 )
 
 
@@ -49,7 +48,7 @@ class Detector:
         conf: float = 0.35,
         imgsz: int = 640,
         half: bool = True,
-        classes: Optional[Sequence[int]] = None,
+        classes: Sequence[int] | None = None,
     ) -> None:
         self.backend = str(backend).lower()
         self.weights = weights
@@ -64,7 +63,7 @@ class Detector:
         if self._model is not None:
             return self._model
         try:
-            from ultralytics import YOLO, RTDETR  # heavy import, kept local
+            from ultralytics import RTDETR, YOLO  # heavy import, kept local
         except Exception as err:  # pragma: no cover - exercised only without the dep
             raise ImportError(_INSTALL_HINT.format(err=err)) from err
 
@@ -90,7 +89,7 @@ class Detector:
         return dict(getattr(m, "names", {}) or {})
 
     # ---- inference ----
-    def detect(self, frame_bgr: np.ndarray) -> List[Detection]:
+    def detect(self, frame_bgr: np.ndarray) -> list[Detection]:
         """Run stateless detection on a single BGR frame -> list[Detection]."""
         model = self._load()
         results = model.predict(
@@ -108,7 +107,7 @@ class Detector:
         frame_bgr: np.ndarray,
         tracker: str = "botsort.yaml",
         persist: bool = True,
-    ) -> List[Detection]:
+    ) -> list[Detection]:
         """Run detection + multi-object tracking on a single BGR frame.
 
         `persist=True` keeps the Kalman state + ID counters alive across calls so track
@@ -128,8 +127,8 @@ class Detector:
         return self._to_detections(results)
 
     # ---- result -> Detection conversion ----
-    def _to_detections(self, results) -> List[Detection]:
-        dets: List[Detection] = []
+    def _to_detections(self, results) -> list[Detection]:
+        dets: list[Detection] = []
         if not results:
             return dets
         res = results[0]  # single-image inference -> one Results object

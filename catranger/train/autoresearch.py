@@ -26,25 +26,23 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-import yaml
+from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNS_DIR = _REPO_ROOT / "runs" / "train"
 LOG_PATH = RUNS_DIR / "autoresearch_log.jsonl"
 BEST_PATH = RUNS_DIR / "best_trial.json"
 
-from catranger.train.train import train_once, publish_weights, _load_config  # reuse the primitive
+from catranger.train.train import _load_config, publish_weights, train_once  # noqa: E402
 
 
-def _append_log(record: Dict[str, Any]) -> None:
+def _append_log(record: dict[str, Any]) -> None:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     with open(LOG_PATH, "a") as f:
         f.write(json.dumps(record) + "\n")
 
 
-def _budget_epochs(budget_min: float, sec_per_epoch: Optional[float], cap: int) -> int:
+def _budget_epochs(budget_min: float, sec_per_epoch: float | None, cap: int) -> int:
     """How many epochs fit the time budget, given a measured seconds/epoch. Always >=1,
     never more than the config's epoch cap."""
     if not sec_per_epoch or sec_per_epoch <= 0:
@@ -53,10 +51,10 @@ def _budget_epochs(budget_min: float, sec_per_epoch: Optional[float], cap: int) 
     return max(1, min(cap, fit))
 
 
-def autoresearch(config_path: str = "configs/train.yaml") -> Dict[str, Any]:
+def autoresearch(config_path: str = "configs/train.yaml") -> dict[str, Any]:
     cfg = _load_config(config_path)
     ar = cfg.get("autoresearch", {}) or {}
-    trials: List[Dict[str, Any]] = list(ar.get("trials", []) or [])
+    trials: list[dict[str, Any]] = list(ar.get("trials", []) or [])
     budget_min = float(ar.get("budget_min", 5))
     epoch_cap = int(cfg.get("epochs", 40))
     metric_key = str(cfg.get("metric", "metrics/mAP50-95(B)"))
@@ -66,21 +64,25 @@ def autoresearch(config_path: str = "configs/train.yaml") -> Dict[str, Any]:
             "no autoresearch.trials in the config; add a list of hyperparam override dicts."
         )
 
-    print(f"[autoresearch] {len(trials)} trials, budget={budget_min} min/trial, "
-          f"frozen metric={metric_key}")
+    print(
+        f"[autoresearch] {len(trials)} trials, budget={budget_min} min/trial, "
+        f"frozen metric={metric_key}"
+    )
 
-    best: Optional[Dict[str, Any]] = None
-    sec_per_epoch: Optional[float] = None  # learned from the first trial, reused as an estimate
+    best: dict[str, Any] | None = None
+    sec_per_epoch: float | None = None  # learned from the first trial, reused as an estimate
 
     for i, overrides in enumerate(trials):
         # Cap this trial's epochs to fit the wall-clock budget.
         epochs = _budget_epochs(budget_min, sec_per_epoch, epoch_cap)
         name = f"autoresearch_t{i}"
-        print(f"\n[autoresearch] === trial {i} === overrides={overrides} "
-              f"epochs<= {epochs} (budget {budget_min} min)")
+        print(
+            f"\n[autoresearch] === trial {i} === overrides={overrides} "
+            f"epochs<= {epochs} (budget {budget_min} min)"
+        )
 
         t0 = time.time()
-        record: Dict[str, Any] = {
+        record: dict[str, Any] = {
             "trial": i,
             "name": name,
             "overrides": overrides,
@@ -115,12 +117,13 @@ def autoresearch(config_path: str = "configs/train.yaml") -> Dict[str, Any]:
             prev = None if best is None else best["metric"]
             best = dict(record)
             record["decision"] = "KEEP"
-            print(f"[autoresearch] trial {i}: {metric_key}={metric_val} -> KEEP "
-                  f"(prev best={prev})")
+            print(f"[autoresearch] trial {i}: {metric_key}={metric_val} -> KEEP (prev best={prev})")
         else:
             record["decision"] = "REJECT"
-            print(f"[autoresearch] trial {i}: {metric_key}={metric_val} -> REJECT "
-                  f"(best={best['metric']})")
+            print(
+                f"[autoresearch] trial {i}: {metric_key}={metric_val} -> REJECT "
+                f"(best={best['metric']})"
+            )
 
         _append_log(record)
 
@@ -142,8 +145,7 @@ def autoresearch(config_path: str = "configs/train.yaml") -> Dict[str, Any]:
     with open(BEST_PATH, "w") as f:
         json.dump(winner, f, indent=2)
 
-    print(f"\n[autoresearch] WINNER overrides={best['overrides']} "
-          f"{metric_key}={best['metric']}")
+    print(f"\n[autoresearch] WINNER overrides={best['overrides']} {metric_key}={best['metric']}")
     print(f"[autoresearch] wrote {BEST_PATH}")
     print(f"[autoresearch] trial log -> {LOG_PATH}")
     if published is not None:
