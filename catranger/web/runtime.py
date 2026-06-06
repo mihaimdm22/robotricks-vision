@@ -24,6 +24,7 @@ import numpy as np
 from catranger.types import Command, FrameResult
 from catranger.web.controller import Mode, RobotController, StopReason
 from catranger.web.registry import ModelProfile, ModelRegistry
+from catranger.web.store import DistanceStore
 
 
 def _ml_available() -> bool:
@@ -65,6 +66,12 @@ class RobotRuntime:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+        # distance history (sqlite) + the live chart's latest CI band
+        self.store = DistanceStore(str(cfg.get("history_db", "outputs/history.sqlite3")))
+        self._history_interval = 1.0 / float(cfg.get("history_hz", 4) or 4)
+        self._last_record_ts = 0.0
+        self._last_dist: tuple[float | None, float | None, float | None] = (None, None, None)
+
     # ------------------------------------------------------------- lifecycle
     def start(self) -> None:
         self.connect_robot(str(self.cfg.get("default_robot", "dummy")))
@@ -87,6 +94,7 @@ class RobotRuntime:
                 self._source.close()
             except Exception:
                 pass
+        self.store.close()
 
     # ------------------------------------------------------------- the loop
     def _run(self) -> None:
@@ -98,14 +106,51 @@ class RobotRuntime:
             if frame is None:
                 self.controller.camera_connected = False
                 self.controller.apply(None, frame_index=idx)
+                self._last_dist = (None, None, None)
             else:
                 self.controller.camera_connected = True
                 self._last_frame_ts = time.perf_counter()
                 result, draw_frame = self._perceive(frame, idx)
                 cmd = self.controller.apply(result, frame_index=idx)
                 self._publish(self._encode(draw_frame, result, cmd))
+                # history recording must never take down the control thread (driving,
+                # watchdog, video). A sqlite error here is logged and swallowed.
+                try:
+                    self._observe(result)
+                except Exception as exc:
+                    logging.getLogger("catranger.web").warning("history record failed: %s", exc)
             idx += 1
             self._pace(interval, t0)
+
+    def _observe(self, result: FrameResult) -> None:
+        """Cache the target's distance + CI for telemetry, and append a throttled
+        sample to the history store (model estimate vs HC-SR04 truth over time)."""
+        est = lo = hi = None
+        target_id = None
+        tgt = result.target
+        if tgt is not None:
+            target_id = tgt.track_id
+            d = tgt.distance
+            if d is not None and np.isfinite(d.meters):
+                est, lo, hi = round(d.meters, 3), round(d.lo, 3), round(d.hi, 3)
+        self._last_dist = (est, lo, hi)
+        if est is None:
+            return
+        now = time.perf_counter()
+        if now - self._last_record_ts < self._history_interval:
+            return
+        self._last_record_ts = now
+        gt = self.controller.latest_telemetry.get("gt_cm")
+        gt_cm = float(gt) if isinstance(gt, (int, float)) and gt >= 0 else None
+        self.store.record(
+            ts=time.time(),
+            est_m=est,
+            lo=lo,
+            hi=hi,
+            gt_cm=gt_cm,
+            target_id=target_id,
+            mode=self.controller.mode.value,
+        )
 
     def _pace(self, interval: float, t0: float) -> None:
         if interval <= 0:
@@ -173,6 +218,8 @@ class RobotRuntime:
                 "camera": self.camera_spec,
                 "robot": self.robot_desc,
                 "frame_age_ms": round(age_ms, 1) if age_ms is not None else None,
+                "target_dist_lo": self._last_dist[1],
+                "target_dist_hi": self._last_dist[2],
                 "watchdog_timeout_s": self.controller.watchdog_timeout_s,
                 "safe_stop_cm": self.controller.safe_stop_cm,
                 "video_stale_ms": int(self.cfg.get("video_stale_ms", 1000)),

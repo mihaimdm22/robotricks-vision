@@ -187,6 +187,15 @@ def create_app(runtime: Any) -> FastAPI:
             status_code=501,
         )
 
+    @app.get("/api/history")
+    def history(limit: int = 600, since: float | None = None) -> dict:
+        """Recorded distance samples (model estimate + CI vs HC-SR04) over time,
+        for the live history chart. Empty when no store is attached (test fakes)."""
+        store = getattr(runtime, "store", None)
+        if store is None:
+            return {"samples": []}
+        return {"samples": store.recent(limit=limit, since=since)}
+
     # ----------------------------------------------------------------- video
     @app.get("/video")
     async def video(request: Request) -> StreamingResponse:
