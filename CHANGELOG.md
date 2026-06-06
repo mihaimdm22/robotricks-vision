@@ -2,6 +2,22 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.1.1] - 2026-06-06
+
+### Fixed
+- **`make eval` now produces the performance report.** `catranger.eval.report` had no CLI
+  entry point, so `make eval` exited silently without writing `outputs/report/report.md`.
+  Added a `main()` driver that runs the pipeline over a `--source` and writes the report
+  (FPS, track continuity, command smoothness; distance MAE when labels are supplied).
+- **RT-DETR (approach B) no longer crashes on CPU.** FP16 (`half`) inference was passed to
+  Ultralytics regardless of device, segfaulting the RT-DETR path on CPU/MPS (SIGSEGV).
+  `half` is now forced off unless the device is CUDA, where FP16 is actually supported.
+  This also speeds up approach A on CPU.
+
+### Changed
+- Tapo C211 camera config documents the manual focal-length re-anchor procedure instead of
+  referencing a `catranger calibrate` command that does not exist.
+
 ## [0.1.0] - 2026-06-06
 
 Initial CatRanger build for the Monsson hack-a-ton 2026 (Cat Tracker + How Far,
