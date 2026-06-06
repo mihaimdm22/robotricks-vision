@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "catranger"
-version = "0.1.0"
+version = "0.2.0"
 description = "Cat detection + tracking + monocular distance for the Monsson hack-a-ton 2026 (Go2 / Tapo C211)"
 readme = "README.md"
 # 3.11 floor: the code already uses PEP 604 `X | Y` unions (config.py, train/prepare.py)

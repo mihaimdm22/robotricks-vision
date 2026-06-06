@@ -23,6 +23,25 @@ _DEFAULT_FPS = 15.0
 _HISTORY_LEN = 15
 
 
+def _device_is_cuda(device: str | None) -> bool:
+    """True only when inference runs on a CUDA GPU (where FP16/half is safe).
+
+    FP16 is CUDA-only: passing half=True on CPU/MPS gives no speedup and crashes
+    the Ultralytics RT-DETR path with a native SIGSEGV. We use this to force half
+    off everywhere except CUDA. `device` may be None (auto), "cpu", "mps",
+    "cuda"/"cuda:0", or a bare GPU index like "0".
+    """
+    if device is None:
+        try:
+            import torch
+
+            return bool(torch.cuda.is_available())
+        except Exception:
+            return False
+    d = str(device).lower()
+    return d.startswith("cuda") or d.isdigit()
+
+
 class CatRanger:
     """Build detector + (optional) depth net + distance estimator, then process frames."""
 
@@ -48,6 +67,10 @@ class CatRanger:
         conf = float(det_cfg.get("conf", 0.35))
         imgsz = int(det_cfg.get("imgsz", 640))
         half = bool(det_cfg.get("half", True))
+        # FP16 is CUDA-only: on CPU/MPS it never helps and segfaults the RT-DETR
+        # path. Force it off unless we're actually on a CUDA device.
+        if half and not _device_is_cuda(device):
+            half = False
 
         from catranger.detect import Detector  # lazy: pulls ultralytics only here
 

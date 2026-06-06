@@ -2,7 +2,7 @@
 
 All notable changes to CatRanger are documented here.
 
-## [Unreleased]
+## [0.2.0] - 2026-06-06
 
 Repo hardening — the hack-a-ton entry is now a maintained project. No perception/geometry
 behavior changed; the guaranteed pretrained demo is untouched.
@@ -33,6 +33,22 @@ behavior changed; the guaranteed pretrained demo is untouched.
   if a pip-only host needs it) and the unused `typer` dependency.
 - Linter-surfaced dead code: an unused `cx` local in `control.py` and a pointless walrus
   assignment in `scripts/demo.py`.
+
+## [0.1.1] - 2026-06-06
+
+### Fixed
+- **`make eval` now produces the performance report.** `catranger.eval.report` had no CLI
+  entry point, so `make eval` exited silently without writing `outputs/report/report.md`.
+  Added a `main()` driver that runs the pipeline over a `--source` and writes the report
+  (FPS, track continuity, command smoothness; distance MAE when labels are supplied).
+- **RT-DETR (approach B) no longer crashes on CPU.** FP16 (`half`) inference was passed to
+  Ultralytics regardless of device, segfaulting the RT-DETR path on CPU/MPS (SIGSEGV).
+  `half` is now forced off unless the device is CUDA, where FP16 is actually supported.
+  This also speeds up approach A on CPU.
+
+### Changed
+- Tapo C211 camera config documents the manual focal-length re-anchor procedure instead of
+  referencing a `catranger calibrate` command that does not exist.
 
 ## [0.1.0] - 2026-06-06
 

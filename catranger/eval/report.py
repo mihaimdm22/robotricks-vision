@@ -12,7 +12,10 @@ Typical use from the eval script:
 
 from __future__ import annotations
 
+import argparse
 import math
+import time
+from pathlib import Path
 
 from catranger.eval.metrics import (
     distance_mae,
@@ -217,3 +220,102 @@ def build_report(
     with open(out_path, "w") as f:
         f.write(text)
     return out_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI driver behind `make eval` (python -m catranger.eval.report).
+
+    Runs the pipeline over a source, collects per-frame results/commands/times,
+    then run_eval() -> build_report() -> outputs/report/report.md. The pipeline
+    deps (torch/ultralytics) are imported lazily HERE so importing this module
+    just to call build_report() stays dependency-light (see module docstring).
+    """
+    ap = argparse.ArgumentParser(
+        prog="catranger.eval.report",
+        description="Run CatRanger over a source and write the performance report",
+    )
+    ap.add_argument(
+        "--source", required=True, help="image dir | image | video | rtsp url | webcam index"
+    )
+    ap.add_argument("--config", default="cat_distance", help="task config (configs/<name>.yaml)")
+    ap.add_argument("--camera", default=None, help="override camera config (e.g. tapo_c211)")
+    ap.add_argument("--approach", default="A", choices=["A", "B"], help="A=YOLO11, B=RT-DETR")
+    ap.add_argument(
+        "--classes",
+        default=None,
+        help="override classes: 'all', or comma-sep COCO ids (e.g. 15 cat). "
+        "Use 'all' for the generic How-Far object stills.",
+    )
+    ap.add_argument(
+        "--no-depth", action="store_true", help="geometry only (no depth net; faster on CPU)"
+    )
+    ap.add_argument(
+        "--device",
+        default=None,
+        help="cuda | cpu | mps (governs the depth net + FP16/half selection)",
+    )
+    ap.add_argument("--stride", type=int, default=1, help="frame stride (video/stream)")
+    ap.add_argument("--max-frames", type=int, default=0, help="cap frames (0=all)")
+    ap.add_argument("--out", default="outputs/report/report.md", help="report output path")
+    args = ap.parse_args(argv)
+
+    # lazy: only running the eval needs the heavy perception stack.
+    from catranger.config import load_app, load_camera
+    from catranger.control import Follower
+    from catranger.io import frame_source, is_stream
+    from catranger.pipeline import CatRanger
+
+    app = load_app(args.config)
+    if args.camera:
+        app.camera = load_camera(args.camera)
+    if args.classes is not None:
+        app.raw["classes"] = (
+            None
+            if args.classes.lower() == "all"
+            else [int(c) for c in args.classes.split(",") if c.strip()]
+        )
+
+    approach = "approach_a" if args.approach == "A" else "approach_b"
+    ranger = CatRanger(app, approach=approach, use_depth=not args.no_depth, device=args.device)
+    follower = Follower(app.get("follow", default={}))
+
+    results: list[FrameResult] = []
+    commands: list[Command] = []
+    frame_times: list[float] = []
+
+    print(
+        f"[eval] source={args.source} camera={app.camera.name} approach={approach} "
+        f"depth={'off' if args.no_depth else 'on'}"
+    )
+    if args.max_frames == 0 and (is_stream(args.source) or str(args.source).isdigit()):
+        print(
+            "[eval] warning: unbounded source (stream/webcam) with --max-frames 0 — every "
+            "frame is buffered in memory for aggregate metrics; pass --max-frames N to bound it."
+        )
+    for idx, frame in frame_source(args.source, stride=args.stride, max_frames=args.max_frames):
+        t0 = time.perf_counter()
+        result = ranger.process(frame, frame_index=idx)
+        frame_times.append(time.perf_counter() - t0)
+        results.append(result)
+        commands.append(follower.step(result))
+
+    if not results:
+        print("[eval] no frames processed — nothing to report")
+        return 1
+
+    # The provided inference sets ship NO distance labels, so MAE/MAPE are skipped
+    # (gts=None). Pass gts={"preds":[...], "gts":[...]} (meters) to populate them.
+    metrics = run_eval(results, commands, frame_times, gts=None)
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    path = build_report(metrics, str(out), title=f"CatRanger performance report — {approach}")
+    print(
+        f"[eval] {len(results)} frames | mean {float(metrics['fps'].get('mean_fps', 0.0)):.1f} FPS "
+        f"| wrote {path}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
