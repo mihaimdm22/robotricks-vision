@@ -76,3 +76,11 @@ end-to-end; everything below is polish, hardware bring-up, or stretch.
 - [x] **Offline weights** (M5) — `scripts/fetch_weights.py` warms the ultralytics cache (`make fetch-weights`); weights stay gitignored. **Completed:** v0.3.0 (2026-06-06).
 - [ ] **Console smoke test runner** — no jest/vitest is configured in `apps/web`; `next build` static-prerenders `/console` as a render smoke. Add a component test runner if the console grows. **Priority:** P3.
 - [ ] Not building (explicitly out of scope): auth/TLS/public exposure, WebRTC video, in-browser training/annotation, session record/replay, native mobile, multi-robot.
+
+### Vercel deploy follow-ups (deferred at the `vercel-deploy-plan.md` /autoplan gate — Shape A)
+> Shipped in this plan: public **landing** on Vercel + the **local** console keeps
+> working (runtime `API_BASE` from localStorage). The hosted-console workstream was
+> cut because a public HTTPS console can't reach a LAN HTTP/no-auth robot backend.
+- [ ] **Hosted-console error taxonomy** — typed `mixed_content` + `cors_blocked` + cert-fail states (distinct from generic `unreachable`), and a `/healthz` reachability probe (must treat `204`/`res.ok` as success, not parse a body). **Priority:** P3. Only worth it if a hosted console becomes a real target.
+- [ ] **Public backend access (needs auth first)** — a TLS tunnel (Cloudflare Tunnel / Tailscale Funnel) to `catranger serve` would let a hosted console drive a robot, but CORS is **not** auth: today anyone with the public URL could drive. Gate behind real auth before exposing. **Priority:** P3 / blocked-on-auth.
+- [ ] **`apps/web` unit runner** — vitest+jsdom; first test = `API_BASE` resolution order (localStorage > env > default) + SSR `window`-guard. (Overlaps the smoke-test entry above.) **Priority:** P3.

@@ -2,6 +2,36 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.3.1] - 2026-06-06
+
+Prepare the web frontend for Vercel deployment. Scope decided at an `/autoplan`
+gate (Shape A): the **marketing landing** ships to Vercel as a public site; the
+**control console stays a local tool** (a public HTTPS page can't reach a LAN/
+no-auth robot backend). No Python touched — the scored perception core and the
+control plane are untouched.
+
+### Added
+- **Runtime Backend URL** (`apps/web`): the console resolves its API origin at
+  runtime — `localStorage` override > `NEXT_PUBLIC_API_BASE` (build default) >
+  `http://localhost:8080` — so one build points at any LAN box without a rebuild.
+  A "Backend URL" field in the Connections tab saves it; the change remounts the
+  telemetry WebSocket + MJPEG stream against the new origin via
+  `useSyncExternalStore` (SSR-safe, no hydration mismatch).
+- **No-backend state**: the console shows a "runs locally" help banner (with a
+  jump to the Backend URL field) instead of a wall of failed-fetch errors when no
+  backend is reachable.
+- **Vercel config**: `apps/web/vercel.json` (framework + pnpm commands),
+  `packageManager` pin, a *Deploy to Vercel* README section (Root Directory
+  `apps/web`, Node 22 in project settings, leave `NEXT_PUBLIC_API_BASE` unset).
+
+### Changed
+- **Landing honesty for a public URL**: the distance card is relabelled "Example
+  readout" (was a pulsing "LIVE DISTANCE" mock); footer/nav links now point to
+  real anchors and the repo (dead `href="#"` links removed, "Admin"/"Live demo"
+  dropped); console CTAs link to run-locally docs, not a `/console` that can't
+  reach a robot.
+- Connection error messages now include the typed `cause`, not just problem + fix.
+
 ## [0.3.0] - 2026-06-06
 
 Web platform M3 + M5, and the control console migrated to Next.js. The scored

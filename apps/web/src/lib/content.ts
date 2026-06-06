@@ -5,14 +5,19 @@
  */
 import type { IconName } from "@/components/icons";
 
+/** The public landing links out to the repo; the live console is a local tool
+ * (`make web` / `catranger serve`), not a hosted feature — see the README. */
+export const REPO = "https://github.com/mihaimdm22/robotricks-vision";
+export const RUN_LOCALLY = `${REPO}#web-control-panel`;
+
 export const nav = {
   links: [
     { label: "Features", href: "#features" },
     { label: "How it works", href: "#how" },
     { label: "Hardware", href: "#hardware" },
-    { label: "Docs", href: "#" },
+    { label: "Docs", href: REPO },
   ],
-  cta: { label: "Open Console", href: "/console" },
+  cta: { label: "View on GitHub", href: REPO },
 };
 
 export const hero = {
@@ -24,7 +29,7 @@ export const hero = {
     "Detect a cat, hold its identity, and say exactly how far it is — in meters, " +
     "with an honest confidence interval — from one ordinary camera. Then see where " +
     "it will be, so you frame the shot before it lands.",
-  primary: { label: "Open Console", href: "/console" },
+  primary: { label: "Run it locally", href: RUN_LOCALLY },
   secondary: { label: "Watch the pipeline", href: "#how" },
   chips: [
     "±1 cm ground truth",
@@ -160,20 +165,36 @@ export const hardware: Hardware[] = [
   },
 ];
 
+export type FooterLink = { label: string; href: string };
+
 export const footer = {
   tagline: "Detect · Track · Measure · Predict",
   columns: [
     {
       title: "Product",
-      links: ["Console", "Admin", "Live demo", "Changelog"],
+      links: [
+        { label: "Run locally", href: RUN_LOCALLY },
+        { label: "Changelog", href: `${REPO}/blob/main/CHANGELOG.md` },
+        { label: "GitHub", href: REPO },
+      ] as FooterLink[],
     },
     {
       title: "Pipeline",
-      links: ["Detection", "Tracking", "Distance", "Prediction"],
+      links: [
+        { label: "Detection", href: "#how" },
+        { label: "Tracking", href: "#how" },
+        { label: "Distance", href: "#features" },
+        { label: "Prediction", href: "#features" },
+      ] as FooterLink[],
     },
     {
       title: "Hardware",
-      links: ["Tapo C211", "Arduino Mega", "HC-SR04", "Go2"],
+      links: [
+        { label: "Tapo C211", href: "#hardware" },
+        { label: "Arduino Mega", href: "#hardware" },
+        { label: "HC-SR04", href: "#hardware" },
+        { label: "Go2", href: "#hardware" },
+      ] as FooterLink[],
     },
   ],
 };

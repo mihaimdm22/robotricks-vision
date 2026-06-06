@@ -48,6 +48,33 @@ There is **no Next.js proxy/rewrite** in the path: the browser talks straight to
 FastAPI. This keeps the WebSocket (`/ws`) and MJPEG (`/video`) robust — a dev
 proxy's WS upgrade is flaky.
 
+## Deploy to Vercel (landing only)
+
+The **marketing landing (`/`) deploys to Vercel** as the public, shareable site —
+it needs no backend. The **console (`/console`) stays a local tool**: a public
+HTTPS page can't reach a LAN `http://` robot backend (mixed content + CORS + no
+public address), and the backend is no-auth/LAN-only by design. The landing's
+CTAs link to this repo's run-locally docs, not the console.
+
+Vercel project settings (the repo is a monorepo; `apps/web` is its own pnpm
+workspace root):
+
+| Setting | Value |
+| --- | --- |
+| **Root Directory** | `apps/web` (required — the lockfile/workspace live here, not at repo root) |
+| Framework | Next.js (auto-detected) |
+| Install / Build | `pnpm install` / `pnpm build` (pnpm auto-detected from the lockfile) |
+| **Node.js Version** | **22** — set this in *Project Settings → Node.js Version*. Vercel does **not** read `.nvmrc` (that's local-only); `engines`/the dashboard govern. |
+| Environment | none required for the landing. Do **not** set `NEXT_PUBLIC_API_BASE` (it bakes a backend URL into the bundle). |
+
+`apps/web/vercel.json` pins the framework + commands so the config is reviewable
+in-repo. Verify the first **preview** deploy (landing renders, no `sharp`/build
+warnings) before promoting to production.
+
+> **Console retargeting (local).** `NEXT_PUBLIC_API_BASE` is the build-time
+> default; the in-app **Backend URL** field (Connections tab) overrides it at
+> runtime (saved in the browser), so one build points at any LAN box — no rebuild.
+
 ## What the console does
 
 - **Control** — IDLE / MANUAL / FOLLOW, press-and-hold drive (W/A/S/D or the

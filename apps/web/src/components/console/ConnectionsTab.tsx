@@ -4,11 +4,23 @@
  * auto-discovery feeding a pick-list instead of requiring a typed target. */
 
 import { useState } from "react";
-import { api } from "@/lib/api";
+import { api, apiBase, buildDefaultBase, setApiBase, clearApiBase } from "@/lib/api";
 
 type Msg = { text: string; tone: "ok" | "warn" } | null;
 
 export function ConnectionsTab() {
+  const [baseInput, setBaseInput] = useState(() => apiBase());
+
+  // setApiBase/clearApiBase notify the store; Console re-reads and remounts this
+  // subtree (and the WS/MJPEG) against the new origin — no callback needed (R6).
+  function saveBase() {
+    setApiBase(baseInput);
+  }
+  function resetBase() {
+    clearApiBase();
+    setBaseInput(buildDefaultBase);
+  }
+
   const [camSpec, setCamSpec] = useState("");
   const [camMsg, setCamMsg] = useState<Msg>(null);
 
@@ -22,7 +34,7 @@ export function ConnectionsTab() {
   async function connectCam() {
     const r = await api.connectCamera(camSpec || "synthetic");
     if (r.ok) setCamMsg({ text: r.warning ?? `connected: ${r.label}`, tone: r.warning ? "warn" : "ok" });
-    else setCamMsg({ text: `${r.problem}${r.fix ? ` — ${r.fix}` : ""}`, tone: "warn" });
+    else setCamMsg({ text: errText(r), tone: "warn" });
   }
 
   async function discover() {
@@ -43,8 +55,13 @@ export function ConnectionsTab() {
         text: r.warning ?? `bridge: ${r.bridge} (${r.connected ? "live" : "sim"})`,
         tone: r.warning ? "warn" : r.connected ? "ok" : "warn",
       });
-    else setRobotMsg({ text: `${r.problem}${r.fix ? ` — ${r.fix}` : ""}`, tone: "warn" });
+    else setRobotMsg({ text: errText(r), tone: "warn" });
   }
+
+  // Render the full typed error: problem (cause) — fix. The old code dropped
+  // `cause`, which is often the most useful line (R14).
+  const errText = (e: { problem: string; cause?: string; fix?: string }) =>
+    `${e.problem}${e.cause ? ` (${e.cause})` : ""}${e.fix ? ` — ${e.fix}` : ""}`;
 
   const msgEl = (m: Msg) =>
     m && (
@@ -53,8 +70,38 @@ export function ConnectionsTab() {
       </div>
     );
 
+  const overridden = baseInput.replace(/\/$/, "") !== buildDefaultBase;
+
   return (
     <div className="flex flex-col gap-5">
+      <section className="op-surface p-4">
+        <h3 className="mb-2 font-display font-semibold">Backend URL</h3>
+        <p className="mb-2 text-xs text-dim">
+          The control server (<code className="font-mono">catranger serve</code>).
+          Saved in this browser and applied without a rebuild — point it at this
+          machine&apos;s LAN IP (e.g. <code className="font-mono">http://192.168.1.42:8080</code>)
+          for phone access, and add that origin to <code className="font-mono">cors_origins</code>{" "}
+          in <code className="font-mono">configs/web.yaml</code>.
+        </p>
+        <input
+          className="w-full rounded-md border border-line bg-bg px-3 py-2 text-sm font-mono"
+          placeholder={buildDefaultBase}
+          value={baseInput}
+          onChange={(e) => setBaseInput(e.target.value)}
+        />
+        <div className="mt-2 flex items-center gap-2">
+          <button type="button" className="op-btn" onClick={saveBase}>
+            Save &amp; reconnect
+          </button>
+          <button type="button" className="op-btn" onClick={resetBase}>
+            Reset to default
+          </button>
+          <span className="ml-auto text-xs text-dim">
+            {overridden ? "override active" : "build default"}
+          </span>
+        </div>
+      </section>
+
       <section className="op-surface p-4">
         <h3 className="mb-2 font-display font-semibold">Camera (wireless)</h3>
         <input
