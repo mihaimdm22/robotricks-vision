@@ -12,7 +12,7 @@ export const nav = {
     { label: "Hardware", href: "#hardware" },
     { label: "Docs", href: "#" },
   ],
-  cta: { label: "Open Console", href: "#live" },
+  cta: { label: "Open Console", href: "/console" },
 };
 
 export const hero = {
@@ -24,7 +24,7 @@ export const hero = {
     "Detect a cat, hold its identity, and say exactly how far it is — in meters, " +
     "with an honest confidence interval — from one ordinary camera. Then see where " +
     "it will be, so you frame the shot before it lands.",
-  primary: { label: "Open Console", href: "#live" },
+  primary: { label: "Open Console", href: "/console" },
   secondary: { label: "Watch the pipeline", href: "#how" },
   chips: [
     "±1 cm ground truth",

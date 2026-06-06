@@ -26,7 +26,7 @@ export function CallToAction() {
               to get a first reading.
             </p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <GradientButton href="#live">Open Console</GradientButton>
+              <GradientButton href="/console">Open Console</GradientButton>
               <OutlinePill href="#how">See the pipeline</OutlinePill>
             </div>
           </div>
