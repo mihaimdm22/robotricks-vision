@@ -7,7 +7,9 @@ name = "catranger"
 version = "0.1.0"
 description = "Cat detection + tracking + monocular distance for the Monsson hack-a-ton 2026 (Go2 / Tapo C211)"
 readme = "README.md"
-requires-python = ">=3.9"
+# 3.11 floor: the code already uses PEP 604 `X | Y` unions (config.py, train/prepare.py)
+# which only parse under `from __future__ import annotations` on 3.9/3.10. 3.9 is EOL.
+requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.24",
     "opencv-python>=4.8",
@@ -33,16 +35,110 @@ hw = [
     "pyserial>=3.5",
     "pytapo>=3.3",
 ]
-dev = [
-    "pytest>=7.4",
-    "typer>=0.12",
-]
 
 [project.scripts]
 catranger = "catranger.cli:app"
+
+# Dev tooling (PEP 735). Not shipped in the wheel; `uv sync` installs it by default.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "nbstripout>=0.7",
+    "types-pyyaml>=6.0",
+]
 
 [tool.setuptools]
 packages = ["catranger", "catranger.hw", "catranger.train", "catranger.eval"]
 
 [tool.setuptools.package-dir]
 "" = "."
+
+# ---- uv: pin torch to the CPU wheel index so `uv lock` and CI don't pull the
+# multi-GB CUDA wheels (or fail on platform markers). GPU users override locally. ----
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+# ---- Ruff: lint + format (replaces black + isort + flake8 + pyupgrade). ----
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["catranger", "scripts", "tests"]
+extend-exclude = ["notebooks"]
+
+[tool.ruff.lint]
+# Wave 1 (this PR): pycodestyle/Pyflakes, import-sort, pyupgrade, comprehensions.
+# Wave 2 (planned follow-up): "B", "SIM", "RUF".
+# BLE001 stays OFF on purpose: the broad `except Exception` guards in detect.py /
+# depth.py intentionally catch CUDA / transformers init failures, not just ImportError.
+select = ["E", "F", "I", "UP", "C4"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["catranger"]
+
+[tool.ruff.lint.per-file-ignores]
+# CLI entry points: long --help text and copy-paste command examples in docstrings
+# read better unwrapped. The package itself stays E501-strict.
+"scripts/*.py" = ["E501"]
+
+# ---- mypy: typed-but-not-strict, scoped to the package. ----
+[tool.mypy]
+python_version = "3.11"
+files = ["catranger"]
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+pretty = true
+
+# Heavy / C-extension backends ship no (or noisy) type stubs — don't fail on them.
+[[tool.mypy.overrides]]
+module = [
+    "cv2.*",
+    "torch.*",
+    "torchvision.*",
+    "ultralytics.*",
+    "transformers.*",
+    "unidepth.*",
+    "roboflow.*",
+    "fiftyone.*",
+    "pytapo.*",
+    "serial.*",
+    "bleak.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --cov=catranger --cov-report=term-missing"
+
+# Coverage is measured on the deterministic pure-core only. The heavy GPU/model
+# paths (detect/depth/track/pipeline/viz) are guarded by the CI import-smoke leg,
+# not unit-tested, so excluding them keeps the percentage honest.
+[tool.coverage.run]
+source = ["catranger"]
+omit = [
+    "catranger/detect.py",
+    "catranger/depth.py",
+    "catranger/track.py",
+    "catranger/pipeline.py",
+    "catranger/viz.py",
+    "catranger/cli.py",
+    "catranger/eval/report.py",
+    "catranger/hw/*",
+    "catranger/train/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+# Gate the pure core (heavy paths are excluded above and guarded by CI import-smoke).
+fail_under = 85
