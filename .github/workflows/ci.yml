@@ -54,4 +54,26 @@ jobs:
           python-version: "3.12"
       - run: uv sync --frozen --extra ml
       - name: import every heavy module
-        run: uv run python -c "import catranger.pipeline, catranger.detect, catranger.depth, catranger.track, catranger.viz; print('import smoke OK')"
+        # `lap` is the BoT-SORT/ByteTrack assignment solver — pipeline.process() ->
+        # detector.track() needs it. Importing it here guards against it dropping out
+        # of the `ml` extra again (import-smoke never runs track(), so a missing lap
+        # would otherwise ship green).
+        run: uv run python -c "import catranger.pipeline, catranger.detect, catranger.depth, catranger.track, catranger.viz, lap; print('import smoke OK')"
+
+  web:
+    # The base `test` job skips the web route tests (no fastapi). This leg installs
+    # the web extra and runs them, plus imports the I/O modules (server/runtime/
+    # sources) so a syntax/import error there can't ship green.
+    name: web layer (fastapi route contracts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --frozen --extra web
+      - name: import web modules
+        run: uv run python -c "import catranger.web.server, catranger.web.runtime, catranger.web.sources; print('web import OK')"
+      - name: web route-contract tests
+        run: uv run pytest tests/test_web_server.py -q --no-cov

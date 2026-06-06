@@ -81,6 +81,37 @@ uv run python scripts/demo.py --source 0 --control --hw-port /dev/ttyACM0
 
 `make demo` runs #1 by default. `uv run catranger doctor` / `catranger info` inspect the env and config.
 
+## Web control panel
+
+A browser dashboard to drive the robot by hand, toggle autonomous follow, hot-swap the
+detector, and manage the camera + Bluetooth links — from any device on the same LAN. The
+scored perception core is untouched; this is an optional layer behind the `web` extra.
+
+```bash
+make install-web          # fastapi + uvicorn + ml (cat detection needs torch)
+make serve                # -> http://localhost:8080  (open from any LAN device)
+# or: uv run catranger serve --host 0.0.0.0 --port 8080
+```
+
+Open `http://<this-laptop-ip>:8080` from a phone/laptop on the same Wi-Fi. It boots **safe
+and hardware-free**: a synthetic video source + a DummyBridge, mode `IDLE` — nothing moves
+until you connect a robot and switch to MANUAL/FOLLOW. Safety is built in: a watchdog
+dead-man's switch stops the motors if the browser goes silent, a latched E-stop, a
+persistent banner that says *why* the robot stopped, video-staleness detection, and the
+firmware's 20 cm hard-stop underneath it all.
+
+| Tab | What it does |
+|---|---|
+| **Control** | live video, press-and-hold drive pad (or W/A/S/D), IDLE/MANUAL/FOLLOW, speed + camera-pan sliders, E-stop |
+| **Models** | hot-swap the detector from `configs/models.yaml` (YOLO11 ↔ RT-DETR ↔ a fine-tuned `best.pt`); the COCO baseline is the always-available default |
+| **Connections** | camera (`synthetic` \| webcam `0` \| `rtsp://…`) + robot (`bt` HC-05 / `ble` HM-10 / `usb`); a failed real link shows honestly as a simulation fallback, never a false "connected" |
+| **Eval** | reserved — run `make eval` from the CLI for now |
+
+Config lives in `configs/web.yaml` (host, port, fps cap, watchdog timeout, defaults) and
+`configs/models.yaml` (the registry). Cat detection needs the `ml` extra; without it the
+panel still streams video and drives by hand. Camera over RTSP needs a Tapo **Camera
+Account** (not your cloud login); HC-05 over Bluetooth is **9600** baud (see Hardware).
+
 ## Development
 
 `uv sync` installs the dev toolchain (ruff, mypy, pytest, pre-commit). Run the full gate
