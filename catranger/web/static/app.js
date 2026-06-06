@@ -88,6 +88,8 @@ function updateUI(t) {
   // active mode button
   document.querySelectorAll(".mode-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mode === t.mode && !estopped));
+
+  chartPush(t);
 }
 function pill(id, label, ok, detail, robot) {
   const el = $(id);
@@ -190,5 +192,125 @@ $("robotDisconnect").addEventListener("click", async () => {
   await post("/api/robot/disconnect"); msg("robotMsg", "disconnected (simulation)", "ok");
 });
 function msg(id, text, cls) { const e = $(id); e.textContent = text; e.className = "conn-msg " + cls; }
+
+// ---------------------------------------------------------------- history chart
+// Dependency-free canvas chart: model estimate (orange) + CI band vs HC-SR04
+// ground truth (green). Seeds from /api/history, then appends live /ws points.
+const chart = { pts: [], max: 2000, lastPush: 0, raf: 0, css: null };
+
+function chartColors() {
+  if (chart.css) return chart.css;
+  const s = getComputedStyle(document.documentElement);
+  const g = (n, f) => (s.getPropertyValue(n).trim() || f);
+  chart.css = {
+    est: g("--orange-bright", "#ff8a3d"),
+    band: g("--orange", "#ff6b1a"),
+    gt: g("--truth", "#34d399"),
+    line: "rgba(255,255,255,0.10)",
+    dim: g("--dim", "#6f6881"),
+    mono: g("--font-mono", "monospace"),
+  };
+  return chart.css;
+}
+function hexA(hex, a) {
+  const h = (hex || "").replace("#", "");
+  if (h.length < 6) return `rgba(255,107,26,${a})`;
+  return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
+}
+function chartScheduleDraw() {
+  if (chart.raf) return;
+  chart.raf = requestAnimationFrame(() => { chart.raf = 0; chartDraw(); });
+}
+function chartPush(t) {
+  const est = t.target_dist_m;
+  if (est == null) return;
+  const now = Date.now() / 1000;
+  if (now - chart.lastPush < 0.2) return; // ~5 Hz live cap
+  chart.lastPush = now;
+  const gt = (t.gt_cm != null && t.gt_cm >= 0) ? t.gt_cm / 100 : null;
+  chart.pts.push({ t: now, est, lo: t.target_dist_lo ?? null, hi: t.target_dist_hi ?? null, gt });
+  if (chart.pts.length > chart.max) chart.pts.splice(0, chart.pts.length - chart.max);
+  chartScheduleDraw();
+}
+async function chartSeed() {
+  try {
+    const data = await (await fetch("/api/history?limit=1500")).json();
+    chart.pts = (data.samples || []).map((s) => ({
+      t: s.ts, est: s.est_m, lo: s.lo, hi: s.hi,
+      gt: (s.gt_cm != null && s.gt_cm >= 0) ? s.gt_cm / 100 : null,
+    }));
+    chartScheduleDraw();
+  } catch (e) { /* no history yet — chart fills as samples arrive */ }
+}
+function chartDraw() {
+  const cv = $("distChart");
+  if (!cv) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if (W === 0 || H === 0) return;
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const c = chartColors();
+  const x0 = 36, x1 = W - 10, y0 = 10, y1 = H - 16;
+  const pts = chart.pts;
+
+  ctx.strokeStyle = c.line; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x1, y1); ctx.stroke();
+
+  if (pts.length < 1) {
+    ctx.fillStyle = c.dim; ctx.font = `11px ${c.mono}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("waiting for distance data…", (x0 + x1) / 2, (y0 + y1) / 2);
+    return;
+  }
+
+  let tMin = pts[0].t, tMax = pts[pts.length - 1].t;
+  if (tMax - tMin < 1) tMax = tMin + 1;
+  let vMin = Infinity, vMax = -Infinity;
+  for (const p of pts) for (const v of [p.est, p.lo, p.hi, p.gt])
+    if (v != null && isFinite(v)) { if (v < vMin) vMin = v; if (v > vMax) vMax = v; }
+  if (!isFinite(vMin)) { vMin = 0; vMax = 1; }
+  if (vMax - vMin < 0.2) vMax = vMin + 0.2;
+  const padV = (vMax - vMin) * 0.1;
+  vMin = Math.max(0, vMin - padV); vMax = vMax + padV;
+
+  const sx = (t) => x0 + (x1 - x0) * (t - tMin) / (tMax - tMin);
+  const sy = (v) => y1 - (y1 - y0) * (v - vMin) / (vMax - vMin);
+
+  ctx.fillStyle = c.dim; ctx.font = `10px ${c.mono}`; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (let i = 0; i <= 2; i++) {
+    const v = vMin + (vMax - vMin) * i / 2, y = sy(v);
+    ctx.strokeStyle = c.line; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+    ctx.fillText(v.toFixed(1) + "m", x0 - 6, y);
+  }
+
+  const band = pts.filter((p) => p.lo != null && p.hi != null);
+  if (band.length > 1) {
+    ctx.beginPath();
+    band.forEach((p, i) => { const X = sx(p.t), Y = sy(p.hi); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+    for (let i = band.length - 1; i >= 0; i--) ctx.lineTo(sx(band[i].t), sy(band[i].lo));
+    ctx.closePath(); ctx.fillStyle = hexA(c.band, 0.16); ctx.fill();
+  }
+
+  const line = (key, color, width, dash) => {
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash || []);
+    ctx.beginPath(); let pen = false;
+    for (const p of pts) {
+      const v = p[key];
+      if (v == null || !isFinite(v)) { pen = false; continue; }
+      const X = sx(p.t), Y = sy(v);
+      pen ? ctx.lineTo(X, Y) : (ctx.moveTo(X, Y), pen = true);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  line("gt", c.gt, 1.5, [4, 4]);
+  line("est", c.est, 2);
+
+  const last = pts[pts.length - 1];
+  if (last.est != null) { ctx.fillStyle = c.est; ctx.beginPath(); ctx.arc(sx(last.t), sy(last.est), 3, 0, Math.PI * 2); ctx.fill(); }
+}
+window.addEventListener("resize", chartScheduleDraw);
+chartSeed();
 
 connectWS();
