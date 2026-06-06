@@ -31,6 +31,8 @@ class FakeRuntime:
         ]
         self.camera = "synthetic"
         self.robot = "dummy"
+        self._eval_running = False
+        self._eval_result: dict | None = None
 
     # lifecycle
     def start(self) -> None:
@@ -94,6 +96,51 @@ class FakeRuntime:
     def connect_robot(self, connection: str, target: str | None = None, baud: int = 115200) -> dict:
         self.robot = f"{connection}:{target}" if target else connection
         return {"ok": True, "bridge": "DummyBridge", "connected": False, "warning": None}
+
+    # eval (M3) — a controllable fake job for route-contract tests
+    def start_eval(self, params: dict) -> dict:
+        if not params.get("source"):
+            return {
+                "ok": False,
+                "code": "eval_bad_source",
+                "problem": "no source",
+                "cause": "",
+                "fix": "",
+                "status": 400,
+            }
+        if self._eval_running:
+            return {
+                "ok": False,
+                "code": "eval_busy",
+                "problem": "already running",
+                "cause": "",
+                "fix": "",
+                "status": 409,
+            }
+        self._eval_running = True
+        return {"ok": True, "state": "running"}
+
+    def eval_status(self) -> dict:
+        return {
+            "ok": True,
+            "state": "running" if self._eval_running else "idle",
+            "done": 0,
+            "total": None,
+            "started_at": None,
+            "n_frames": None,
+            "error": None,
+        }
+
+    def eval_result(self) -> dict | None:
+        return self._eval_result
+
+    def cancel_eval(self) -> dict:
+        self._eval_running = False
+        return {"ok": True, "cancelled": True}
+
+    # discovery (M5)
+    def discover_devices(self) -> dict:
+        return {"ok": True, "serial": [], "ble_available": False, "hint": "no serial ports found"}
 
 
 @pytest.fixture
@@ -190,11 +237,88 @@ def test_robot_connect_reports_bridge_class(client_and_runtime) -> None:
     assert body["connected"] is False  # honest: a dummy fallback is not "connected"
 
 
-def test_eval_route_is_a_501_stub(client_and_runtime) -> None:
+def test_eval_run_starts_and_rejects_a_second_run(client_and_runtime) -> None:
     client, _ = client_and_runtime
-    r = client.get("/api/eval")
-    assert r.status_code == 501
-    assert r.json()["code"] == "not_implemented"
+    r = client.post("/api/eval/run", json={"source": "data/raw/how_far"})
+    assert r.json() == {"ok": True, "state": "running"}
+    busy = client.post("/api/eval/run", json={"source": "data/raw/how_far"})
+    assert busy.status_code == 409
+    assert busy.json()["code"] == "eval_busy"
+
+
+def test_eval_run_rejects_empty_source(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    r = client.post("/api/eval/run", json={"source": ""})
+    assert r.status_code == 400
+    assert r.json()["code"] == "eval_bad_source"
+
+
+def test_eval_status_reports_state(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    assert client.get("/api/eval/status").json()["state"] == "idle"
+    client.post("/api/eval/run", json={"source": "data/raw/how_far"})
+    assert client.get("/api/eval/status").json()["state"] == "running"
+
+
+def test_eval_report_404_until_done_then_returns_payload(client_and_runtime) -> None:
+    client, rt = client_and_runtime
+    assert client.get("/api/eval/report").status_code == 404
+    assert client.get("/api/eval/report").json()["code"] == "eval_not_ready"
+    rt._eval_result = {"markdown": "# report", "metrics": {"fps": {"mean_fps": 30.0}}}
+    body = client.get("/api/eval/report").json()
+    assert body["ok"] is True
+    assert body["markdown"] == "# report"
+
+
+def test_robot_discover_returns_a_list(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    body = client.get("/api/robot/discover").json()
+    assert body["ok"] is True
+    assert isinstance(body["serial"], list)
+
+
+def _wait_until_controller(ws) -> None:
+    """Claim the token and block until telemetry confirms the server processed it
+    (removes the two-connection ordering race)."""
+    ws.send_json({"type": "claim"})
+    for _ in range(100):
+        msg = ws.receive_json()
+        if msg.get("type") == "telemetry" and msg.get("you_are_controller"):
+            return
+    raise AssertionError("never became controller")
+
+
+def test_ws_estop_works_from_an_observer(client_and_runtime) -> None:
+    # The 2nd connection is an observer, but E-stop is NEVER gated by the token —
+    # the observer must still be able to stop the robot.
+    client, rt = client_and_runtime
+    with client.websocket_connect("/ws") as holder:
+        holder.receive_json()
+        _wait_until_controller(holder)
+        with client.websocket_connect("/ws") as observer:
+            observer.receive_json()
+            observer.send_json({"type": "estop"})
+            for _ in range(100):
+                if observer.receive_json().get("estop"):
+                    break
+            assert rt.controller.estopped is True
+
+
+def test_ws_observer_drive_intent_is_nacked(client_and_runtime) -> None:
+    client, rt = client_and_runtime
+    with client.websocket_connect("/ws") as holder:
+        holder.receive_json()
+        _wait_until_controller(holder)
+        with client.websocket_connect("/ws") as observer:
+            observer.receive_json()
+            observer.send_json({"type": "intent", "action": "left", "value": 1.0})
+            nack = None
+            for _ in range(100):
+                m = observer.receive_json()
+                if m.get("type") == "nack":
+                    nack = m
+                    break
+            assert nack is not None and nack["code"] == "observer"
 
 
 def test_mjpeg_chunk_framing() -> None:

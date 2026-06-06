@@ -222,13 +222,96 @@ def build_report(
     return out_path
 
 
+class EvalCancelled(RuntimeError):
+    """Raised inside run_eval_job when a caller's cancel() returns True."""
+
+
+def run_eval_job(
+    source: str,
+    *,
+    config: str = "cat_distance",
+    camera: str | None = None,
+    approach: str = "A",
+    classes: str | None = None,
+    use_depth: bool = True,
+    device: str | None = None,
+    stride: int = 1,
+    max_frames: int = 0,
+    out: str = "outputs/report/report.md",
+    gts: dict[str, list[float]] | None = None,
+    progress: object = None,
+    cancel: object = None,
+) -> dict:
+    """Run the perception pipeline over a source and build the report — the ONE
+    heavy eval code path, shared by the CLI (`main`) and the web Eval tab.
+
+    `progress` (if given) is called as progress(done:int, total:int|None) per
+    frame; `cancel` (if given) is polled each frame and raises EvalCancelled when
+    it returns True. Heavy deps (torch/ultralytics) are imported HERE so the
+    module stays light for callers that only need build_report().
+
+    Returns {"metrics", "report_path", "report_text", "n_frames", "approach"}.
+    """
+    from catranger.config import load_app, load_camera
+    from catranger.control import Follower
+    from catranger.io import frame_source, is_stream
+    from catranger.pipeline import CatRanger
+
+    app = load_app(config)
+    if camera:
+        app.camera = load_camera(camera)
+    if classes is not None:
+        app.raw["classes"] = (
+            None if classes.lower() == "all" else [int(c) for c in classes.split(",") if c.strip()]
+        )
+
+    approach_key = "approach_a" if str(approach).upper() == "A" else "approach_b"
+    ranger = CatRanger(app, approach=approach_key, use_depth=use_depth, device=device)
+    follower = Follower(app.get("follow", default={}))
+
+    results: list[FrameResult] = []
+    commands: list[Command] = []
+    frame_times: list[float] = []
+
+    unbounded = max_frames == 0 and (is_stream(source) or str(source).isdigit())
+    total = None if unbounded else (max_frames or None)
+    for done, (idx, frame) in enumerate(
+        frame_source(source, stride=stride, max_frames=max_frames), start=1
+    ):
+        if cancel is not None and cancel():  # type: ignore[operator]
+            raise EvalCancelled("eval cancelled by caller")
+        t0 = time.perf_counter()
+        result = ranger.process(frame, frame_index=idx)
+        frame_times.append(time.perf_counter() - t0)
+        results.append(result)
+        commands.append(follower.step(result))
+        if progress is not None:
+            progress(done, total)  # type: ignore[operator]
+
+    if not results:
+        raise ValueError(f"no frames processed from source {source!r} — nothing to report")
+
+    metrics = run_eval(results, commands, frame_times, gts=gts)
+    out_path = Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path = build_report(
+        metrics, str(out_path), title=f"CatRanger performance report — {approach_key}"
+    )
+    report_text = out_path.read_text(encoding="utf-8")
+    return {
+        "metrics": metrics,
+        "report_path": report_path,
+        "report_text": report_text,
+        "n_frames": len(results),
+        "approach": approach_key,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI driver behind `make eval` (python -m catranger.eval.report).
 
-    Runs the pipeline over a source, collects per-frame results/commands/times,
-    then run_eval() -> build_report() -> outputs/report/report.md. The pipeline
-    deps (torch/ultralytics) are imported lazily HERE so importing this module
-    just to call build_report() stays dependency-light (see module docstring).
+    Thin wrapper over run_eval_job (the shared heavy path), so the CLI and the
+    web Eval tab can never diverge.
     """
     ap = argparse.ArgumentParser(
         prog="catranger.eval.report",
@@ -259,60 +342,34 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default="outputs/report/report.md", help="report output path")
     args = ap.parse_args(argv)
 
-    # lazy: only running the eval needs the heavy perception stack.
-    from catranger.config import load_app, load_camera
-    from catranger.control import Follower
-    from catranger.io import frame_source, is_stream
-    from catranger.pipeline import CatRanger
-
-    app = load_app(args.config)
-    if args.camera:
-        app.camera = load_camera(args.camera)
-    if args.classes is not None:
-        app.raw["classes"] = (
-            None
-            if args.classes.lower() == "all"
-            else [int(c) for c in args.classes.split(",") if c.strip()]
-        )
-
-    approach = "approach_a" if args.approach == "A" else "approach_b"
-    ranger = CatRanger(app, approach=approach, use_depth=not args.no_depth, device=args.device)
-    follower = Follower(app.get("follow", default={}))
-
-    results: list[FrameResult] = []
-    commands: list[Command] = []
-    frame_times: list[float] = []
-
     print(
-        f"[eval] source={args.source} camera={app.camera.name} approach={approach} "
+        f"[eval] source={args.source} approach={args.approach} "
         f"depth={'off' if args.no_depth else 'on'}"
     )
-    if args.max_frames == 0 and (is_stream(args.source) or str(args.source).isdigit()):
-        print(
-            "[eval] warning: unbounded source (stream/webcam) with --max-frames 0 — every "
-            "frame is buffered in memory for aggregate metrics; pass --max-frames N to bound it."
+    # The provided inference sets ship NO distance labels, so MAE/MAPE are skipped
+    # (gts=None). Pass a gts.json sidecar / labels to populate them (see the web tab).
+    try:
+        out = run_eval_job(
+            args.source,
+            config=args.config,
+            camera=args.camera,
+            approach=args.approach,
+            classes=args.classes,
+            use_depth=not args.no_depth,
+            device=args.device,
+            stride=args.stride,
+            max_frames=args.max_frames,
+            out=args.out,
+            gts=None,
         )
-    for idx, frame in frame_source(args.source, stride=args.stride, max_frames=args.max_frames):
-        t0 = time.perf_counter()
-        result = ranger.process(frame, frame_index=idx)
-        frame_times.append(time.perf_counter() - t0)
-        results.append(result)
-        commands.append(follower.step(result))
-
-    if not results:
-        print("[eval] no frames processed — nothing to report")
+    except ValueError as exc:
+        print(f"[eval] {exc}")
         return 1
 
-    # The provided inference sets ship NO distance labels, so MAE/MAPE are skipped
-    # (gts=None). Pass gts={"preds":[...], "gts":[...]} (meters) to populate them.
-    metrics = run_eval(results, commands, frame_times, gts=None)
-
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    path = build_report(metrics, str(out), title=f"CatRanger performance report — {approach}")
+    metrics = out["metrics"]
     print(
-        f"[eval] {len(results)} frames | mean {float(metrics['fps'].get('mean_fps', 0.0)):.1f} FPS "
-        f"| wrote {path}"
+        f"[eval] {out['n_frames']} frames | "
+        f"mean {float(metrics['fps'].get('mean_fps', 0.0)):.1f} FPS | wrote {out['report_path']}"
     )
     return 0
 

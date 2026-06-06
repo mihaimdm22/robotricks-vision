@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 
@@ -39,7 +41,9 @@ def test_image_dir_yielded_in_natural_order(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(io.cv2, "imread", fake_imread)
     out = list(io.frame_source(str(tmp_path)))
-    assert [p.rsplit("/", 1)[-1] for p in seen] == ["frame1.jpg", "frame2.jpg", "frame10.jpg"]
+    # os.path.basename, not rsplit("/"), so the assertion holds on Windows too
+    # (paths come back with "\" there).
+    assert [os.path.basename(p) for p in seen] == ["frame1.jpg", "frame2.jpg", "frame10.jpg"]
     assert len(out) == 3
 
 

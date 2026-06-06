@@ -83,34 +83,50 @@ uv run python scripts/demo.py --source 0 --control --hw-port /dev/ttyACM0
 
 ## Web control panel
 
-A browser dashboard to drive the robot by hand, toggle autonomous follow, hot-swap the
-detector, and manage the camera + Bluetooth links — from any device on the same LAN. The
-scored perception core is untouched; this is an optional layer behind the `web` extra.
+A browser console to drive the robot by hand, toggle autonomous follow, hot-swap the
+detector, manage the camera + Bluetooth links, and run eval — from any device on the same
+LAN. The scored perception core is untouched. The UI is a **Next.js app** (`apps/web`);
+**FastAPI** (`catranger serve`, the `web` extra) is the headless API behind it.
 
 ```bash
-make install-web          # fastapi + uvicorn + ml (cat detection needs torch)
-make serve                # -> http://localhost:8080  (open from any LAN device)
-# or: uv run catranger serve --host 0.0.0.0 --port 8080
+make web-setup            # uv sync --extra ml --extra web  +  pnpm install (apps/web)
+make web                  # FastAPI :8080 + Next.js console :3000 together
+# cross-platform equivalent (Windows/macOS/Linux):
+uv run python scripts/web.py
 ```
 
-Open `http://<this-laptop-ip>:8080` from a phone/laptop on the same Wi-Fi. It boots **safe
-and hardware-free**: a synthetic video source + a DummyBridge, mode `IDLE` — nothing moves
-until you connect a robot and switch to MANUAL/FOLLOW. Safety is built in: a watchdog
-dead-man's switch stops the motors if the browser goes silent, a latched E-stop, a
-persistent banner that says *why* the robot stopped, video-staleness detection, and the
+Open **http://localhost:3000/console**. Two processes run: the Next.js console (`:3000`)
+talks straight to the FastAPI API (`:8080`) over REST + one WebSocket + the MJPEG stream —
+no proxy in the path. For phone/LAN access, set `NEXT_PUBLIC_API_BASE` to this laptop's LAN
+IP (e.g. `http://192.168.1.42:8080`) and add it to `cors_origins` in `configs/web.yaml`
+(see `apps/web/README.md`).
+
+It boots **safe and hardware-free**: a synthetic video source + a DummyBridge, mode `IDLE`
+— nothing moves until you connect a robot and switch to MANUAL/FOLLOW. Safety is built in: a
+watchdog dead-man's switch, a latched E-stop reachable from any client (even observers), a
+single-controller drive token so two operators can't fight one robot, a persistent banner
+that says *why* the robot stopped, distinct video stale/unreachable states, and the
 firmware's 20 cm hard-stop underneath it all.
 
 | Tab | What it does |
 |---|---|
-| **Control** | live video, press-and-hold drive pad (or W/A/S/D), IDLE/MANUAL/FOLLOW, speed + camera-pan sliders, E-stop |
+| **Control** | live video, press-and-hold drive pad (or W/A/S/D), IDLE/MANUAL/FOLLOW, speed + camera-pan sliders, E-stop; one operator holds the drive token, others observe + can request control |
 | **Models** | hot-swap the detector from `configs/models.yaml` (YOLO11 ↔ RT-DETR ↔ a fine-tuned `best.pt`); the COCO baseline is the always-available default |
-| **Connections** | camera (`synthetic` \| webcam `0` \| `rtsp://…`) + robot (`bt` HC-05 / `ble` HM-10 / `usb`); a failed real link shows honestly as a simulation fallback, never a false "connected" |
-| **Eval** | reserved — run `make eval` from the CLI for now |
+| **Connections** | camera (`synthetic` \| webcam `0` \| `rtsp://…`) + robot (`bt` HC-05 / `ble` HM-10 / `usb`) with device auto-discovery; a failed real link shows honestly as a simulation fallback, never a false "connected" |
+| **Eval** | run the eval pipeline over a recorded source → metric cards + the full `report.md` (FPS / tracking / smoothness; distance MAE when labels are supplied). Refused unless IDLE (it's heavy). |
 
-Config lives in `configs/web.yaml` (host, port, fps cap, watchdog timeout, defaults) and
-`configs/models.yaml` (the registry). Cat detection needs the `ml` extra; without it the
-panel still streams video and drives by hand. Camera over RTSP needs a Tapo **Camera
-Account** (not your cloud login); HC-05 over Bluetooth is **9600** baud (see Hardware).
+Config lives in `configs/web.yaml` (host, port, fps cap, watchdog, CORS origins, control
+token timeout) and `configs/models.yaml` (the registry). Cat detection needs the `ml`
+extra; without it the console still streams video and drives by hand. Pre-fetch weights for
+an offline demo with `make fetch-weights`. Camera over RTSP needs a Tapo **Camera Account**
+(not your cloud login); HC-05 over Bluetooth is **9600** baud (see Hardware).
+
+> The legacy zero-Node panel is still served at `http://<laptop-ip>:8080/` as a fallback
+> for a live demo with no Node toolchain. The Next.js console at `:3000` is the primary UI.
+
+**Deploy:** the marketing **landing** deploys to Vercel as a public site (Root
+Directory `apps/web`); the **console stays local** — a public HTTPS page can't reach
+a LAN/no-auth robot backend. See `apps/web/README.md` → *Deploy to Vercel*.
 
 ## Development
 

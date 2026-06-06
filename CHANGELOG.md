@@ -2,7 +2,7 @@
 
 All notable changes to CatRanger are documented here.
 
-## [0.3.0] - 2026-06-07
+## [0.3.2] - 2026-06-07
 
 Web control panel: a live distance-history chart and the operator UI restyled to the
 CatRanger brand identity. No perception/geometry behavior changed; the control core and
@@ -26,6 +26,80 @@ CatRanger brand identity. No perception/geometry behavior changed; the control c
   `static/fonts/`), radial glows + engineering grid. Safety affordances stay red/amber. No
   markup ids/classes/`data-*` or JS behavior changed.
 - `configs/web.yaml`: added `history_db` and `history_hz`.
+
+## [0.3.1] - 2026-06-06
+
+Prepare the web frontend for Vercel deployment. Scope decided at an `/autoplan`
+gate (Shape A): the **marketing landing** ships to Vercel as a public site; the
+**control console stays a local tool** (a public HTTPS page can't reach a LAN/
+no-auth robot backend). No Python touched — the scored perception core and the
+control plane are untouched.
+
+### Added
+- **Runtime Backend URL** (`apps/web`): the console resolves its API origin at
+  runtime — `localStorage` override > `NEXT_PUBLIC_API_BASE` (build default) >
+  `http://localhost:8080` — so one build points at any LAN box without a rebuild.
+  A "Backend URL" field in the Connections tab saves it; the change remounts the
+  telemetry WebSocket + MJPEG stream against the new origin via
+  `useSyncExternalStore` (SSR-safe, no hydration mismatch).
+- **No-backend state**: the console shows a "runs locally" help banner (with a
+  jump to the Backend URL field) instead of a wall of failed-fetch errors when no
+  backend is reachable.
+- **Vercel config**: `apps/web/vercel.json` (framework + pnpm commands),
+  `packageManager` pin, a *Deploy to Vercel* README section (Root Directory
+  `apps/web`, Node 22 in project settings, leave `NEXT_PUBLIC_API_BASE` unset).
+
+### Changed
+- **Landing honesty for a public URL**: the distance card is relabelled "Example
+  readout" (was a pulsing "LIVE DISTANCE" mock); footer/nav links now point to
+  real anchors and the repo (dead `href="#"` links removed, "Admin"/"Live demo"
+  dropped); console CTAs link to run-locally docs, not a `/console` that can't
+  reach a robot.
+- Connection error messages now include the typed `cause`, not just problem + fix.
+
+## [0.3.0] - 2026-06-06
+
+Web platform M3 + M5, and the control console migrated to Next.js. The scored
+perception core (`intrinsics/distance/detect/depth/track/pipeline`) is untouched.
+
+### Added
+- **M3 — Eval tab**: run the eval pipeline from the browser over a recorded source
+  and render the report. `catranger/eval/report.py` now exposes a reusable
+  `run_eval_job()` (the single heavy eval path, shared by the CLI `make eval` and
+  the web); `catranger/web/eval_job.py` runs it in a background worker
+  (idle/running/done/error/cancelled, one-at-a-time, cooperative cancel). Routes
+  `POST /api/eval/run` · `GET /api/eval/status` · `GET /api/eval/report` ·
+  `POST /api/eval/cancel`. Refused unless the robot is IDLE (it is CPU/GPU-heavy).
+  Distance MAE/MAPE shows only when ground-truth labels are supplied.
+- **M5 — control-plane hardening**: a single-controller drive token
+  (`catranger/web/arbiter.py`) so one operator drives and others observe and can
+  request control; **E-stop and reset are never gated by the token**. Device
+  auto-discovery (`GET /api/robot/discover`, serial + BLE-availability). Offline
+  weights pre-fetch (`scripts/fetch_weights.py`, `make fetch-weights`).
+- **Next.js control console** (`apps/web`, `/console`): the full operator UI ported
+  from the vanilla panel into React with the design system — persistent safety
+  header (always-loud E-STOP), prioritized status banner, video pane with distinct
+  stale/unreachable states, telemetry strip that greys out on link loss, press-and-
+  hold drive pad (pointer-capture + window keyboard gated on focus + blur->stop),
+  Models / Connections / Eval tabs, observer lock + "request control". Talks
+  straight to FastAPI via `NEXT_PUBLIC_API_BASE` (no proxy); operational (non-glass)
+  design variant; landing CTAs now open `/console`.
+- **Cross-platform launcher** `scripts/web.py` + `make web` / `web-setup` (runs
+  FastAPI + Next.js together on Windows/macOS/Linux); `apps/web/.env.example`,
+  `.nvmrc`, Node `engines`.
+- Tests: `tests/test_web_arbiter.py`, `tests/test_web_eval_job.py`, and
+  eval/discovery/two-WS-arbitration route-contract cases in `tests/test_web_server.py`.
+
+### Changed
+- `catranger/web/server.py`: config-gated CORS (origins in `configs/web.yaml`), the
+  WebSocket gates drive/mode intents through the arbiter while leaving E-stop/reset
+  ungated, and telemetry is per-connection (`you_are_controller`). The legacy
+  vanilla panel + `/` mount are kept as a zero-Node demo fallback.
+- `configs/web.yaml`: `cors_origins`, `control_idle_timeout_s`.
+
+### Fixed
+- `tests/test_io.py`: natural-order assertion now uses `os.path.basename` so it
+  passes on Windows (back-slash paths), not just POSIX.
 
 ## [0.2.0] - 2026-06-06
 

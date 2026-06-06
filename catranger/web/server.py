@@ -19,9 +19,13 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+from catranger.web.arbiter import ControlArbiter
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _BOUNDARY = "frame"
@@ -49,6 +53,14 @@ class RobotConnect(BaseModel):
     connection: str = "dummy"  # dummy|usb|bt|ble
     target: str | None = None
     baud: int = 115200
+
+
+class EvalRun(BaseModel):
+    source: str  # image dir | image | video | rtsp url (NOT a webcam index)
+    approach: str = "A"  # A=YOLO11, B=RT-DETR
+    classes: str | None = None  # 'all' | comma-sep COCO ids
+    max_frames: int = 0  # 0 = all
+    use_depth: bool = False  # off by default: faster on a CPU demo box
 
 
 def _err(code: str, problem: str, cause: str, fix: str, status: int = 400) -> JSONResponse:
@@ -82,6 +94,23 @@ def create_app(runtime: Any) -> FastAPI:
     app = FastAPI(title="CatRanger Control", lifespan=lifespan)
     app.state.runtime = runtime
 
+    # The Next.js console is a separate origin (e.g. http://localhost:3000), so the
+    # browser's fetch() to /api/* needs CORS. Origins live in configs/web.yaml
+    # (numbers/strings in YAML, never hard-coded); empty list = same-origin only.
+    cfg = getattr(runtime, "cfg", {}) or {}
+    cors_origins = list(cfg.get("cors_origins", []) or [])
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+    # M5: single-controller drive token (one operator drives; others observe).
+    arbiter = ControlArbiter(idle_timeout_s=float(cfg.get("control_idle_timeout_s", 8.0)))
+    app.state.arbiter = arbiter
+
     # ----------------------------------------------------------------- pages
     @app.get("/")
     def index() -> FileResponse:
@@ -105,7 +134,7 @@ def create_app(runtime: Any) -> FastAPI:
                 str(exc),
                 "the client sent an unrecognized drive action",
                 "use one of: forward, back, left, right, pan, stop",
-            )  # type: ignore[return-value]
+            )
         return {"ok": True}
 
     @app.post("/api/mode")
@@ -119,7 +148,7 @@ def create_app(runtime: Any) -> FastAPI:
                 f"unknown mode {intent.mode!r}",
                 "mode must be IDLE, MANUAL, or FOLLOW",
                 "send one of IDLE|MANUAL|FOLLOW",
-            )  # type: ignore[return-value]
+            )
         if not ok:
             return _err(
                 "estopped",
@@ -127,7 +156,7 @@ def create_app(runtime: Any) -> FastAPI:
                 "the robot is in a latched emergency stop",
                 "press RESET/ARM to clear the E-stop, then switch mode",
                 status=409,
-            )  # type: ignore[return-value]
+            )
         return {"ok": True, "mode": target}
 
     @app.post("/api/estop")
@@ -156,7 +185,7 @@ def create_app(runtime: Any) -> FastAPI:
                 "the id is not in configs/models.yaml",
                 "GET /api/models for valid ids, or add it to configs/models.yaml",
                 status=404,
-            )  # type: ignore[return-value]
+            )
 
     @app.post("/api/camera/connect")
     def camera_connect(req: CameraConnect) -> dict:
@@ -174,18 +203,40 @@ def create_app(runtime: Any) -> FastAPI:
     def robot_disconnect() -> dict:
         return runtime.connect_robot("dummy")
 
-    @app.get("/api/eval")
-    def eval_stub() -> JSONResponse:
-        return JSONResponse(
-            {
-                "ok": False,
-                "code": "not_implemented",
-                "problem": "the eval tab is not built yet",
-                "cause": "reserved seam — eval lands in a follow-up milestone",
-                "fix": "use `make eval` (catranger/eval) from the CLI for now",
-            },
-            status_code=501,
-        )
+    @app.get("/api/robot/discover")
+    async def robot_discover() -> dict:
+        # serial port enumeration / BLE probe can block — keep it off the loop.
+        return await run_in_threadpool(runtime.discover_devices)
+
+    # ------------------------------------------------------------------ eval
+    @app.post("/api/eval/run")
+    def eval_run(req: EvalRun) -> JSONResponse:
+        res = runtime.start_eval(req.model_dump())
+        if not res.get("ok"):
+            status = int(res.pop("status", 400))
+            return JSONResponse(res, status_code=status)
+        return JSONResponse(res)
+
+    @app.get("/api/eval/status")
+    def eval_status() -> dict:
+        return runtime.eval_status()
+
+    @app.get("/api/eval/report")
+    def eval_report() -> JSONResponse:
+        result = runtime.eval_result()
+        if result is None:
+            return _err(
+                "eval_not_ready",
+                "no finished eval report yet",
+                "no eval run has completed since the server started",
+                "POST /api/eval/run, poll /api/eval/status until state=done",
+                status=404,
+            )
+        return JSONResponse({"ok": True, **result})
+
+    @app.post("/api/eval/cancel")
+    def eval_cancel() -> dict:
+        return runtime.cancel_eval()
 
     @app.get("/api/history")
     def history(limit: int = 600, since: float | None = None) -> dict:
@@ -226,33 +277,74 @@ def create_app(runtime: Any) -> FastAPI:
     async def ws(websocket: WebSocket) -> None:
         await websocket.accept()
         hz = float(getattr(runtime, "fps_cap", 15)) or 15.0
+        cid = arbiter.connect()
 
         async def push_telemetry() -> None:
+            # Telemetry is per-connection: the same robot state, but each client is
+            # told whether IT holds the drive token (you_are_controller).
             while True:
-                await websocket.send_json({"type": "telemetry", **runtime.telemetry()})
+                await websocket.send_json(
+                    {
+                        "type": "telemetry",
+                        **runtime.telemetry(),
+                        "you_are_controller": arbiter.is_holder(cid),
+                        "controller_id": arbiter.holder,
+                    }
+                )
                 await asyncio.sleep(1.0 / hz)
+
+        async def nack(code: str, problem: str, fix: str) -> None:
+            await websocket.send_json(
+                {"type": "nack", "code": code, "problem": problem, "fix": fix}
+            )
 
         sender = asyncio.create_task(push_telemetry())
         try:
             while True:
                 msg = await websocket.receive_json()
                 kind = msg.get("type")
-                if kind == "intent":
-                    try:
-                        runtime.set_manual(msg.get("action", "stop"), float(msg.get("value", 0.0)))
-                    except (ValueError, TypeError):
-                        pass
-                elif kind == "heartbeat":
-                    runtime.heartbeat()
-                elif kind == "mode":
-                    runtime.set_mode(str(msg.get("mode", "IDLE")).upper())
-                elif kind == "estop":
+
+                # SAFETY: E-stop and reset are NEVER gated by the token. Any client,
+                # holder or observer, can stop the robot. Checked first, on purpose.
+                if kind == "estop":
                     runtime.estop()
-                elif kind == "reset":
+                    continue
+                if kind == "reset":
                     runtime.reset()
+                    continue
+
+                if kind in ("claim", "claim_control", "request_control"):
+                    arbiter.claim(cid)
+                    continue
+
+                if kind == "heartbeat":
+                    arbiter.heartbeat(cid)  # keep the token lease alive
+                    if arbiter.is_holder(cid):
+                        runtime.heartbeat()  # refresh the MANUAL watchdog
+                    continue
+
+                # Drive + mode require the token (auto-claimed if it's free).
+                if kind in ("intent", "mode"):
+                    if not arbiter.note_intent(cid):
+                        await nack(
+                            "observer",
+                            "another operator holds control",
+                            "press 'Request control' to take over",
+                        )
+                        continue
+                    if kind == "intent":
+                        try:
+                            runtime.set_manual(
+                                msg.get("action", "stop"), float(msg.get("value", 0.0))
+                            )
+                        except (ValueError, TypeError):
+                            pass
+                    else:  # mode
+                        runtime.set_mode(str(msg.get("mode", "IDLE")).upper())
         except WebSocketDisconnect:
             pass
         finally:
+            arbiter.disconnect(cid)
             sender.cancel()
 
     return app

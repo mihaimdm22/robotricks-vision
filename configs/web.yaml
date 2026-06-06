@@ -24,6 +24,15 @@ watchdog_timeout_s: 0.5   # MANUAL dead-man's switch: no heartbeat within this -
                           # Raise it for laggy Wi-Fi (a phone on a flaky link).
 safe_stop_cm: 20          # mirror of the firmware hard-stop; surfaced in the UI.
 
+# --- web console (Next.js front-end) ---
+control_idle_timeout_s: 8   # M5 drive token: release it if the holder goes quiet
+                            # this long, so another operator can take over.
+cors_origins:               # browser origins allowed to call /api/* (the Next.js
+                            # dev/prod console). Empty = same-origin only. Add your
+                            # LAN console origin for phone access, e.g.:
+  - http://localhost:3000
+  - http://127.0.0.1:3000
+
 # --- defaults at boot (all overridable from the UI) ---
 default_model: yolo11s    # must exist in configs/models.yaml
 default_mode: IDLE        # never auto-arm motors on startup
