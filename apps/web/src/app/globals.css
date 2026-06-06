@@ -1,0 +1,236 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ *
+ * CatRanger Console — design tokens
+ * Mechanical-movement brand: drive orange + motion purple on a dark,
+ * neon-glass canvas. Surfaced to Tailwind v4 via @theme.
+ * ------------------------------------------------------------------ */
+@theme {
+  --color-bg: #0b0710;
+  --color-bg-2: #130c1c;
+  --color-fg: #f5f2f8;
+  --color-muted: #a79fb5;
+  --color-dim: #6f6881;
+
+  --color-orange: #ff6b1a;
+  --color-orange-bright: #ff8a3d;
+  --color-purple: #7c3aed;
+  --color-purple-bright: #9d5cf5;
+  --color-magenta: #b5179e;
+  --color-truth: #34d399;
+
+  --color-line: rgba(255, 255, 255, 0.1);
+  --color-line-strong: rgba(255, 255, 255, 0.16);
+
+  --font-display: var(--font-display-src), "Space Grotesk", ui-sans-serif, sans-serif;
+  --font-sans: var(--font-sans-src), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-src), ui-monospace, "SFMono-Regular", monospace;
+
+  --radius-glass: 20px;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: clip;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--color-orange) 45%, transparent);
+    color: #fff;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-orange-bright);
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+    line-height: 1.02;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Component utilities
+ * ------------------------------------------------------------------ */
+@layer components {
+  .glass {
+    background-image: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.05),
+      rgba(255, 255, 255, 0.018)
+    );
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-glass);
+    backdrop-filter: blur(20px) saturate(125%);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.07),
+      0 24px 60px -28px rgba(0, 0, 0, 0.85);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.8rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-fg);
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid var(--color-line);
+    border-radius: 999px;
+    backdrop-filter: blur(14px);
+    white-space: nowrap;
+  }
+
+  .btn-drive {
+    background-image: linear-gradient(100deg, var(--color-orange), var(--color-purple));
+    color: #fff;
+    box-shadow: 0 12px 34px -10px color-mix(in oklab, var(--color-orange) 65%, transparent);
+    transition:
+      filter 0.2s ease,
+      transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .btn-drive:hover {
+    filter: brightness(1.08);
+    transform: translateY(-1px);
+  }
+  .btn-drive:active {
+    transform: translateY(0);
+  }
+
+  .pill-outline {
+    border: 1px solid color-mix(in oklab, var(--color-orange) 45%, var(--color-line-strong));
+    background: rgba(255, 255, 255, 0.025);
+    transition:
+      border-color 0.2s ease,
+      background 0.2s ease;
+  }
+  .pill-outline:hover {
+    border-color: var(--color-orange-bright);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  /* Filled gradient text (the swoosh word) */
+  .text-gradient {
+    background-image: linear-gradient(100deg, var(--color-orange-bright), var(--color-purple-bright));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Outlined display text — the "CREATORS" mixed-style look */
+  .text-outline {
+    color: transparent;
+    -webkit-text-stroke: 1.5px color-mix(in oklab, var(--color-fg) 50%, transparent);
+  }
+
+  /* Engineering grid, masked to fade at the edges */
+  .grid-field {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+    background-size: 46px 46px;
+    -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 38%, #000 30%, transparent 78%);
+    mask-image: radial-gradient(ellipse 75% 65% at 50% 38%, #000 30%, transparent 78%);
+  }
+
+  .glow-orange {
+    box-shadow: 0 0 60px -10px color-mix(in oklab, var(--color-orange) 55%, transparent);
+  }
+  .glow-purple {
+    box-shadow: 0 0 60px -10px color-mix(in oklab, var(--color-purple) 55%, transparent);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Motion (all gated by prefers-reduced-motion)
+ * ------------------------------------------------------------------ */
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-9px);
+  }
+}
+@keyframes float-slow {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(7px);
+  }
+}
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes scan {
+  0% {
+    transform: translateY(-10%);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(640%);
+    opacity: 0;
+  }
+}
+@keyframes dash {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.animate-float {
+  animation: float 6.5s ease-in-out infinite;
+}
+.animate-float-slow {
+  animation: float-slow 8s ease-in-out infinite;
+}
+.animate-spin-slow {
+  animation: spin-slow 16s linear infinite;
+}
+.animate-pulse-soft {
+  animation: pulse-soft 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
