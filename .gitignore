@@ -1,0 +1,26 @@
+# envs
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# data & model weights (large; not committed)
+data/
+*.pt
+*.pth
+*.onnx
+*.engine
+checkpoints/
+runs/
+
+# outputs
+outputs/
+*.mp4.out.mp4
+
+# os / editor
+.DS_Store
+.ipynb_checkpoints/
+
+# tool state
+.gstack/
+.context/

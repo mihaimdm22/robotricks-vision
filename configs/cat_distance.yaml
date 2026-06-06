@@ -1,0 +1,56 @@
+# The combined task: detect + track a cat (Cat Tracker) AND say how far it is (How Far).
+# Two detector "approaches" satisfy the deck's "minimum 2 approaches" requirement.
+camera: go2_1080p
+
+# COCO class ids to keep. 15 = cat. (Add 0=person, 56=chair, etc. for the generic
+# How Far framing.)
+classes: [15]
+class_names: { 15: cat }
+
+detector:
+  approach_a: { backend: yolo, weights: yolo11s.pt }      # CNN, fast, low jitter
+  approach_b: { backend: rtdetr, weights: rtdetr-l.pt }   # transformer, NMS-free
+  default: approach_a
+  conf: 0.35
+  imgsz: 640
+  half: true                # FP16 on GPU
+  finetuned_weights: null   # set by training to override approach_a (e.g. runs/train/best.pt)
+
+tracker:
+  name: botsort.yaml        # BoT-SORT (camera-motion comp) ; bytetrack.yaml = lighter
+  with_reid: true           # appearance ReID -> identity through full occlusion
+  lock_hysteresis: 5        # frames required to switch the followed target id
+
+depth:
+  enabled: true
+  backend: depth_anything_v2_metric_indoor   # transformers; metric meters indoors
+  # backend: unidepth_v2                      # alt: ingests K -> true metric + confidence
+  every_n: 5                # run the depth net every Nth frame (protect FPS)
+
+# Real-world size priors for monocular distance (meters). Cats vary a lot with
+# posture -> wide range + lean on the depth net. Generic objects included so the
+# How Far framing also works.
+size_priors:
+  cat:    { cue: height, real_m: 0.28, range_m: [0.18, 0.45], weight: 0.6 }
+  person: { cue: height, real_m: 1.70, range_m: [1.55, 1.90], weight: 1.0 }
+  chair:  { cue: height, real_m: 0.45, range_m: [0.42, 0.50], weight: 0.9 }
+  door:   { cue: height, real_m: 2.04, range_m: [2.00, 2.10], weight: 0.9 }
+  pot:    { cue: height, real_m: 0.30, range_m: [0.15, 0.50], weight: 0.4 }
+  ball:   { cue: width,  real_m: 0.22, range_m: [0.07, 0.25], weight: 0.9 }
+  # extra COCO classes that show up in the provided how_far stills / general scenes
+  suitcase:   { cue: height, real_m: 0.55, range_m: [0.40, 0.75], weight: 0.5 }
+  backpack:   { cue: height, real_m: 0.45, range_m: [0.35, 0.55], weight: 0.5 }
+  bottle:     { cue: height, real_m: 0.25, range_m: [0.15, 0.32], weight: 0.6 }
+  refrigerator: { cue: height, real_m: 1.50, range_m: [0.85, 1.90], weight: 0.6 }
+
+# Follow controller (only used when --control / hardware is on).
+follow:
+  setpoint_distance_m: 1.5  # keep the cat at ~1.5 m
+  kp_rot: 1.2               # yaw gain on bearing (rad)
+  kp_fwd: 0.8               # forward gain on distance error (m)
+  deadband_rot: 0.05
+  deadband_dist_m: 0.20
+  ema_alpha: 0.30           # lower = smoother, more lag
+  slew_max: 0.15            # max command change per frame
+  lost_timeout_s: 1.0       # coast this long before SEARCH
+  safe_distance_m: 0.4      # hard stop / back-off threshold

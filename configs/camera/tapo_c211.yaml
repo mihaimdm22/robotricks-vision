@@ -1,0 +1,19 @@
+# TP-Link Tapo C211 — your live-demo camera. NOT the contest camera.
+# The intrinsics below are a ROUGH guess for a 1080p ~110-115 deg lens and MUST be
+# re-anchored before trusting metric distance: hold an object of known size at a
+# known distance, run `catranger calibrate`, and overwrite fx/fy here.
+name: tapo_c211
+fx: 1100.0              # PLACEHOLDER — re-anchor (see needs_calibration)
+fy: 1100.0              # PLACEHOLDER
+cx: 960.0
+cy: 540.0
+width: 1920
+height: 1080
+fov_deg: 110.0
+dist_model: fov
+mount_height_m: 0.15    # depends on how you mount it on the chassis/servo
+needs_calibration: true
+# RTSP: set the Camera Account (Tapo app -> Advanced -> Camera Account), then:
+#   rtsp://<user>:<pass>@<cam_ip>:554/stream1   (1080p main)
+#   rtsp://<user>:<pass>@<cam_ip>:554/stream2   (~360p low-latency)
+rtsp: "rtsp://USER:PASS@CAM_IP:554/stream1"

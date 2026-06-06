@@ -1,0 +1,17 @@
+# Unitree Go2 Edu front camera @ 1080p — from go2_camera_details.txt.
+# This is what the contest hidden test set is scored on. Trust these numbers.
+name: go2_1080p
+fx: 554.3
+fy: 554.3
+cx: 960.0
+cy: 540.0
+width: 1920
+height: 1080
+fov_deg: 120.0          # wide-angle -> strong barrel distortion
+# 'none' by default: no distortion coeffs are provided, and full-frame rectilinear
+# rectify of a 120 deg lens over-stretches the periphery. We instead trust centered
+# objects (CameraModel.centering_weight down-weights edge boxes for geometry). Set
+# 'fov' to enable the one-parameter FOV/division undistort if you crop the result.
+dist_model: none
+mount_height_m: 0.30    # camera ~30 cm off the floor (dog's-eye view)
+needs_calibration: false
