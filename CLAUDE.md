@@ -40,3 +40,17 @@ distraction. Triage accordingly.
   (different sensor/lens) — select with `--camera go2|tapo`.
 - No distortion coefficients were provided. We undistort with a one-parameter
   FOV/division model derived from the known 120°, or trust center crops. State it.
+
+## Maintenance mode (post-hackathon)
+The hack-a-ton entry shipped (v0.1.0). CatRanger is now a **maintained project** with a
+test suite, linting, type-checking, pre-commit, and CI (see `CONTRIBUTING.md`). The rules
+above still hold — with one scoping clarification so they don't fight maintenance:
+
+- The frozen-metric doctrine (**"minimum code, nothing speculative, surgical changes"**)
+  remains law for the **scored perception core**: `catranger/{intrinsics,distance,detect,
+  depth,track,pipeline}.py`. Don't gold-plate the math or add knobs nobody asked for there.
+- **Tooling, tests, CI, types, and docs are exempt** — they are now expected, not "demo
+  garnish". Adding a test, a type annotation, or a lint fix is always in scope.
+- **Quality gates are non-negotiable**: `ruff`, `mypy`, and `pytest` must pass
+  (`make check`). New testable core logic ships with a test. Package management is `uv`.
+- The pretrained-baseline-always-runs and numbers-live-in-YAML rules are permanent.

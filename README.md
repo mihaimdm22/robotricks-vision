@@ -47,13 +47,17 @@ Distance fuses two independent estimates so it stays honest:
 
 ## Install
 
+Uses [uv](https://docs.astral.sh/uv/) — one tool, one lockfile:
+
 ```bash
-make venv            # python3 -m venv .venv
-make install         # core deps (numpy, opencv, pyyaml)
-make install-ml      # torch + ultralytics + transformers  (big; GPU recommended)
+uv sync              # core + dev toolchain into .venv  (alias: make install)
+uv sync --extra ml   # + torch + ultralytics + transformers  (big; GPU recommended)
 make doctor          # check what's installed + GPU
 make data            # symlink the provided contest inference sets into data/raw/
 ```
+
+No uv yet? `pipx install uv` (or see the uv docs). A pip-only host can regenerate a
+pinned requirements file from the lockfile: `uv export --no-hashes > requirements.txt`.
 
 A GPU is recommended for real-time. Without one, the geometry path still runs on CPU
 (`--no-depth`), just without the depth-net fusion.
@@ -62,20 +66,36 @@ A GPU is recommended for real-time. Without one, the geometry path still runs on
 
 ```bash
 # 1) distance on the provided Go2 stills (how_far inference set) → annotated frames
-python scripts/demo.py --source data/raw/how_far --save outputs/how_far_demo
+uv run python scripts/demo.py --source data/raw/how_far --save outputs/how_far_demo
 
 # 2) live cat tracking + distance on a video / webcam
-python scripts/demo.py --source data/cat_demo.mp4 --approach A --show
-python scripts/demo.py --source 0 --approach B --show
+uv run python scripts/demo.py --source data/cat_demo.mp4 --approach A --show
+uv run python scripts/demo.py --source 0 --approach B --show
 
 # 3) on the Tapo C211 (re-anchor intrinsics first — see Hardware)
-python scripts/demo.py --source "rtsp://USER:PASS@CAM_IP:554/stream1" --camera tapo_c211 --show
+uv run python scripts/demo.py --source "rtsp://USER:PASS@CAM_IP:554/stream1" --camera tapo_c211 --show
 
 # 4) follow with the robot
-python scripts/demo.py --source 0 --control --hw-port /dev/ttyACM0
+uv run python scripts/demo.py --source 0 --control --hw-port /dev/ttyACM0
 ```
 
-`make demo` runs #1 by default. `catranger doctor` / `catranger info` inspect the env and config.
+`make demo` runs #1 by default. `uv run catranger doctor` / `catranger info` inspect the env and config.
+
+## Development
+
+`uv sync` installs the dev toolchain (ruff, mypy, pytest, pre-commit). Run the full gate
+with `make check`, or piecemeal:
+
+```bash
+make lint        # ruff check --fix
+make format      # ruff format
+make typecheck   # mypy
+make test        # pytest + coverage (gate: 85% on the pure core)
+uv run pre-commit install   # run the hooks on every commit
+```
+
+Tests cover the deterministic core (geometry, distance, metrics, control state machine);
+the heavy GPU/model paths are import-smoke-tested in CI. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
@@ -101,9 +121,9 @@ Policy (see [`CLAUDE.md`](CLAUDE.md)): **the pretrained baseline always works** 
 guaranteed demo. Fine-tuning is a stretch, hard time-boxed, and never blocks the demo.
 
 ```bash
-catranger prepare        # download + format a cat dataset (Roboflow / Open Images)
-catranger train          # fine-tune YOLO from pretrained weights (one frozen metric: val mAP50-95)
-catranger autoresearch   # karpathy/autoresearch-style keep/reject loop over hyperparams
+uv run catranger prepare        # download + format a cat dataset (Roboflow / Open Images)
+uv run catranger train          # fine-tune YOLO from pretrained weights (one frozen metric: val mAP50-95)
+uv run catranger autoresearch   # karpathy/autoresearch-style keep/reject loop over hyperparams
 ```
 
 "Karpathy" here = a minimal single-file `train.py` + a frozen-metric keep/reject loop
