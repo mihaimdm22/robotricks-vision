@@ -247,6 +247,13 @@ def create_app(runtime: Any) -> FastAPI:
             return {"samples": []}
         return {"samples": store.recent(limit=limit, since=since)}
 
+    @app.get("/api/jobs")
+    def jobs(limit: int = 200) -> dict:
+        """Durable job-queue state (overnight sweeps + web evals) for the live sweep
+        panel (WS-B3). Empty when no queue exists yet (test fakes / fresh install)."""
+        fn = getattr(runtime, "jobs_status", None)
+        return fn(limit=limit) if fn is not None else {"ok": True, "jobs": [], "counts": {}}
+
     # ----------------------------------------------------------------- video
     @app.get("/video")
     async def video(request: Request) -> StreamingResponse:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from enum import StrEnum
 from typing import Any
 
@@ -38,10 +39,25 @@ class EvalJob:
         self._params: dict[str, Any] = {}
         self._result: dict[str, Any] | None = None
         self._error: str | None = None
+        self._on_settle: Callable[[str], None] | None = None
+        self._on_progress_cb: Callable[[int, int | None], None] | None = None
 
     # ----------------------------------------------------------------- control
-    def start(self, **params: Any) -> bool:
-        """Start a run. Returns False if one is already running (caller nacks)."""
+    def start(
+        self,
+        *,
+        on_settle: Callable[[str], None] | None = None,
+        on_progress: Callable[[int, int | None], None] | None = None,
+        **params: Any,
+    ) -> bool:
+        """Start a run. Returns False if one is already running (caller nacks).
+
+        `on_settle` (WS-A7) is called once when the run reaches a terminal state, with the
+        queue status string ("ok" | "fail" | "skipped"), so the runtime can mark the eval
+        done in the durable queue. `on_progress` (WS-A7) is called on each progress tick
+        with (done, total) so the runtime can refresh the eval's durable-queue heartbeat.
+        Both are set ONLY when the run actually starts, so a refused (busy) start never
+        fires the caller's callbacks."""
         with self._lock:
             if self._state == EvalState.RUNNING:
                 return False
@@ -53,6 +69,8 @@ class EvalJob:
             self._params = dict(params)
             self._result = None
             self._error = None
+            self._on_settle = on_settle
+            self._on_progress_cb = on_progress
         self._thread = threading.Thread(target=self._run, name="eval-job", daemon=True)
         self._thread.start()
         return True
@@ -78,20 +96,32 @@ class EvalJob:
         except EvalCancelled:
             with self._lock:
                 self._state = EvalState.CANCELLED
-            return
+            settle = "skipped"  # user-cancelled ~ skipped, for the durable queue
         except Exception as exc:  # surface the real reason; never swallow
             with self._lock:
                 self._state = EvalState.ERROR
                 self._error = f"{type(exc).__name__}: {exc}"
-            return
-        with self._lock:
-            self._result = result
-            self._state = EvalState.DONE
+            settle = "fail"
+        else:
+            with self._lock:
+                self._result = result
+                self._state = EvalState.DONE
+            settle = "ok"
+        if self._on_settle is not None:
+            try:
+                self._on_settle(settle)  # WS-A7: mark the eval done in the durable queue
+            except Exception:  # bookkeeping must never crash the worker thread
+                pass
 
     def _on_progress(self, done: int, total: int | None) -> None:
         with self._lock:
             self._done = done
             self._total = total
+        if self._on_progress_cb is not None:
+            try:
+                self._on_progress_cb(done, total)  # WS-A7: refresh the durable-queue lease
+            except Exception:  # bookkeeping must never crash the worker thread
+                pass
 
     # ----------------------------------------------------------------- readers
     def status(self) -> dict[str, Any]:

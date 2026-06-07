@@ -19,6 +19,13 @@ video_stale_ms: 1000   # if no fresh frame within this window, the UI shows "VID
 history_db: outputs/history.sqlite3  # sqlite log of distance over time; survives restarts
 history_hz: 4                        # samples/sec persisted (live chart runs faster, in-memory)
 
+# --- live overlay (WS-B0): per-detection JSON the console draws on a canvas over the
+# MJPEG frame (crisp labels + failure badges). Thresholds are display heuristics only. ---
+overlay:
+  low_conf: 0.40       # detection confidence below this is flagged "low_conf"
+  wide_ci_frac: 0.30   # distance CI half-width > frac*meters -> "wide_ci"
+  disagree_frac: 0.30  # |geometry-depth| / max(geometry,depth) > frac -> "depth_geom_disagree"
+
 # --- safety ---
 watchdog_timeout_s: 0.5   # MANUAL dead-man's switch: no heartbeat within this -> stop.
                           # Raise it for laggy Wi-Fi (a phone on a flaky link).

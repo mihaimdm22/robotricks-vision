@@ -77,6 +77,66 @@ def test_second_start_is_refused_while_running(monkeypatch) -> None:
     assert _wait_state(job, "done")
 
 
+def _wait_settled(settled: list, timeout: float = 2.0) -> None:
+    deadline = time.time() + timeout
+    while not settled and time.time() < deadline:
+        time.sleep(0.01)
+
+
+def test_on_settle_fires_ok_on_done(monkeypatch) -> None:
+    monkeypatch.setattr(
+        report_mod,
+        "run_eval_job",
+        lambda **k: {
+            "metrics": {},
+            "report_path": "p",
+            "report_text": "",
+            "n_frames": 0,
+            "approach": "approach_a",
+        },
+    )
+    settled: list[str] = []
+    job = EvalJob()
+    job.start(on_settle=settled.append, source="x")
+    assert _wait_state(job, "done")
+    _wait_settled(settled)
+    assert settled == ["ok"]  # WS-A7: durable queue gets the terminal status
+
+
+def test_on_settle_fires_fail_on_error(monkeypatch) -> None:
+    def boom(**kwargs):
+        raise ValueError("bad source")
+
+    monkeypatch.setattr(report_mod, "run_eval_job", boom)
+    settled: list[str] = []
+    job = EvalJob()
+    job.start(on_settle=settled.append, source="x")
+    assert _wait_state(job, "error")
+    _wait_settled(settled)
+    assert settled == ["fail"]
+
+
+def test_on_progress_forwards_ticks(monkeypatch) -> None:
+    def fake(progress=None, **kwargs):
+        if progress is not None:
+            progress(1, 10)
+            progress(7, 10)
+        return {
+            "metrics": {},
+            "report_path": "p",
+            "report_text": "",
+            "n_frames": 0,
+            "approach": "approach_a",
+        }
+
+    monkeypatch.setattr(report_mod, "run_eval_job", fake)
+    ticks: list[tuple[int, int | None]] = []
+    job = EvalJob()
+    job.start(on_progress=lambda done, total: ticks.append((done, total)), source="x")
+    assert _wait_state(job, "done")
+    assert ticks == [(1, 10), (7, 10)]  # WS-A7: runtime refreshes the durable-queue lease
+
+
 def test_cancel_marks_cancelled(monkeypatch) -> None:
     def cancellable(cancel=None, **kwargs):
         from catranger.eval.report import EvalCancelled
