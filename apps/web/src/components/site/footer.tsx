@@ -5,7 +5,7 @@ import { footer } from "@/lib/content";
 export function Footer() {
   return (
     <footer className="relative border-t border-line px-4 py-14 sm:px-6">
-      <div className="mx-auto grid max-w-6xl gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
+      <div className="mx-auto grid max-w-6xl gap-10 sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr_1fr]">
         <div>
           <Link href="#top" className="flex items-center gap-2.5">
             <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-orange to-purple text-white">
@@ -46,8 +46,8 @@ export function Footer() {
       </div>
 
       <div className="mx-auto mt-12 flex max-w-6xl flex-col items-center justify-between gap-3 border-t border-line pt-6 text-center text-xs text-dim sm:flex-row sm:text-left">
-        <p>© 2026 CatRanger · Monsson hack-a-ton entry.</p>
-        <p className="font-mono">Built on pretrained perception + camera geometry.</p>
+        <p>© 2026 CatRanger · A Monsson hack-a-ton 2026 entry.</p>
+        <p className="font-mono">Implements &amp; adapts two Monsson challenges: How Far? + Cat Tracker.</p>
       </div>
     </footer>
   );

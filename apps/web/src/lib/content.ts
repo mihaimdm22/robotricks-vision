@@ -10,10 +10,18 @@ import type { IconName } from "@/components/icons";
 export const REPO = "https://github.com/mihaimdm22/robotricks-vision";
 export const RUN_LOCALLY = `${REPO}#web-control-panel`;
 
+/** The two Monsson hack-a-ton 2026 challenge themes CatRanger implements and adapts. */
+export const CHALLENGES = {
+  hackathon: "https://hackaton.ambasada.pro/",
+  howFar: "https://hackaton.ambasada.pro/challenges/monsson-how-far/",
+  catTracker: "https://hackaton.ambasada.pro/challenges/monsson-cat-tracker/",
+};
+
 export const nav = {
   links: [
     { label: "Features", href: "#features" },
     { label: "Architecture", href: "#architecture" },
+    { label: "Training", href: "#training" },
     { label: "Hardware", href: "#hardware" },
     { label: "Team", href: "#team" },
     { label: "Docs", href: "#docs" },
@@ -264,6 +272,73 @@ export const metrics: Metric[] = [
 ];
 
 /* ------------------------------------------------------------------ *
+ * Training & models — how the perception core improves without ever
+ * risking the demo. Facts: docs/architecture/training-and-reliability.md
+ * and the training policy in ../../CLAUDE.md.
+ * ------------------------------------------------------------------ */
+export const trainingIntro = {
+  eyebrow: "Training & models",
+  title: "Fine-tuned only when it earns its keep",
+  intro:
+    "The pretrained baseline always runs — it is the guaranteed demo. A fine-tune is a stretch on top, kept only if it beats the frozen metric. Nothing trains from scratch.",
+};
+
+export type TrainingPillar = { icon: IconName; tag: string; title: string; body: string };
+
+export const trainingPillars: TrainingPillar[] = [
+  {
+    icon: "gear",
+    tag: "Safety net",
+    title: "Baseline always runs",
+    body:
+      "The pretrained model is the guaranteed demo. One command rolls back to it instantly, so no experiment can ever block the live run.",
+  },
+  {
+    icon: "layers",
+    tag: "Transfer, not scratch",
+    title: "Fine-tune a pretrained YOLO",
+    body:
+      "We fine-tune yolo11s on a cat dataset with a deterministic seed and a resumable single-file harness — never from scratch, where there are no labels and worse generalization.",
+  },
+  {
+    icon: "target",
+    tag: "Keep / reject",
+    title: "Kept only if the metric moves",
+    body:
+      "Each candidate is scored on the same frozen eval and kept only if distance MAE improves past a tolerance band — a proxy gain alone never justifies a keep.",
+  },
+];
+
+export type TrainStage = { icon: IconName; label: string; note: string };
+
+export const trainPipeline: TrainStage[] = [
+  { icon: "layers", label: "Dataset", note: "Roboflow, Open Images, or manual — registered in configs." },
+  { icon: "ruler", label: "Prepare", note: "Formatted into one Ultralytics data.yaml." },
+  { icon: "chip", label: "Fine-tune", note: "yolo11s.pt · deterministic seed · resumable." },
+  { icon: "gauge", label: "Evaluate", note: "Scored on the frozen metrics, against ground truth." },
+  { icon: "target", label: "Keep / reject", note: "Beats the baseline, or it is dropped." },
+  { icon: "robot", label: "Promote", note: "Winner wired in — gated and baseline-safe." },
+];
+
+export const trainingStack = {
+  eyebrow: "Pluggable by design",
+  title: "Swap the model, swap the data",
+  models: {
+    label: "Detectors",
+    items: ["YOLO11s — CNN, fast", "RT-DETR-l — transformer, NMS-free"],
+  },
+  datasets: {
+    label: "Datasets",
+    items: ["Roboflow", "Open Images", "Manual / on-rig"],
+  },
+  loop: {
+    label: "autoresearch",
+    body:
+      "Fixed-budget experiments sweep the training knobs and auto-apply the same keep/reject contract — as durable jobs that survive a crash and recover on restart.",
+  },
+};
+
+/* ------------------------------------------------------------------ *
  * Team. Photos are optional: drop apps/web/public/team/<slug>.jpg and
  * it renders; until then each card shows a branded initials avatar.
  * ------------------------------------------------------------------ */
@@ -279,7 +354,7 @@ export const teamIntro = {
   eyebrow: "The team",
   title: "Built by a four-person crew",
   intro:
-    "Product and pitch, robot build, computer vision, and a robotics champion advising — Monsson 2026.",
+    "Product and pitch, robot build, computer vision, and a robotics mechanics champion — Monsson 2026.",
 };
 
 export const team: Member[] = [
@@ -307,7 +382,7 @@ export const team: Member[] = [
   {
     slug: "rares-ilasoaia",
     name: "Rares Ilasoaia",
-    role: "Robotics champion & advisory",
+    role: "Robotics mechanics champion",
     link: "https://www.infomatrix.ro/finalists2026/",
     linkLabel: "Profile",
   },
@@ -380,6 +455,7 @@ export const footer = {
       links: [
         { label: "Architecture", href: "#architecture" },
         { label: "Metrics", href: "#metrics" },
+        { label: "Training", href: "#training" },
         { label: "Distance", href: "#features" },
         { label: "Hardware", href: "#hardware" },
       ] as FooterLink[],
@@ -390,6 +466,15 @@ export const footer = {
         { label: "Team", href: "#team" },
         { label: "Docs", href: "#docs" },
         { label: "Research & architecture", href: `${REPO}/blob/main/docs/01-RESEARCH-ARCHITECTURE.md` },
+      ] as FooterLink[],
+    },
+    {
+      // The two Monsson challenge briefs we implement and adapt.
+      title: "Challenges",
+      links: [
+        { label: "How Far?", href: CHALLENGES.howFar },
+        { label: "Cat Tracker", href: CHALLENGES.catTracker },
+        { label: "Monsson 2026", href: CHALLENGES.hackathon },
       ] as FooterLink[],
     },
   ],
