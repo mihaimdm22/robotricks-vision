@@ -78,6 +78,12 @@ class Follower:
         self._last_bearing_rad = 0.0  # last observed bearing, for SEARCH sweep
         self._coast_cmd = Command(state="SEARCH")
 
+    def set_search_bearing_deg(self, bearing_deg: float | None) -> None:
+        """Bias SEARCH rotation toward a remembered bearing (e.g. library re-acquire)."""
+        if bearing_deg is None:
+            return
+        self._last_bearing_rad = math.radians(float(bearing_deg))
+
     def _smooth(self, channel: str, raw: float) -> float:
         prev = self.u_prev.get(channel, 0.0)
         u = _deadband(raw, self.deadband_rot if channel == "rotation" else self.deadband_dist)

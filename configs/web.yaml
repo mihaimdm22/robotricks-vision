@@ -17,6 +17,9 @@ video_stale_ms: 1000   # if no fresh frame within this window, the UI shows "VID
 
 # --- distance history (live chart + GET /api/history) ---
 history_db: outputs/history.sqlite3  # sqlite log of distance over time; survives restarts
+cat_library_db: outputs/cat_library.sqlite3  # saved cat faces + last-known pose
+cat_match_threshold: 0.55  # HSV histogram match to re-acquire a library cat (0–1)
+cat_catalog_hz: 2          # thumbnail refresh + auto-save rate for cat picker / library
 history_hz: 4                        # samples/sec persisted (live chart runs faster, in-memory)
 
 # --- live overlay (WS-B0): per-detection JSON the console draws on a canvas over the
@@ -30,6 +33,14 @@ overlay:
 watchdog_timeout_s: 0.5   # MANUAL dead-man's switch: no heartbeat within this -> stop.
                           # Raise it for laggy Wi-Fi (a phone on a flaky link).
 safe_stop_cm: 20          # mirror of the firmware hard-stop; surfaced in the UI.
+
+# --- sonar-assisted camera calibration (HC-SR04 ground truth) ---
+sonar_calibration:
+  baseline_m: 0.09         # camera is ~90 mm behind the ultrasonic sensor (along boresight)
+  duration_s: 5.0          # live sample window when you click Calibrate in Connections
+  min_samples: 8           # minimum paired vision+sonar samples required
+  min_sonar_cm: 25         # ignore closer readings (near-field / obstacle stop band)
+  max_sonar_cm: 180        # ignore beyond metal-detector buzzer band edge
 
 # --- web console (Next.js front-end) ---
 control_idle_timeout_s: 8   # M5 drive token: release it if the holder goes quiet

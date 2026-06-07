@@ -251,6 +251,19 @@ h3 { font-family: var(--font-display); letter-spacing: -0.01em; }
   color: #ffe9b3;
 }
 
+.console-banner {
+  margin: 12px 16px 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--orange) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--orange) 35%, var(--line));
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.console-banner a { color: var(--orange-bright); font-weight: 600; }
+.console-banner code { font-family: var(--mono, ui-monospace, monospace); font-size: 0.8em; }
+
 /* ==================================================================== *
  * Layout
  * ==================================================================== */

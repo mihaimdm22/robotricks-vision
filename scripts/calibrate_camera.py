@@ -26,15 +26,11 @@ Flags:
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-CAMERA_DIR = REPO / "configs" / "camera"
+from catranger.camera_calibrate import CAMERA_DIR, write_focal
 
-_FX = re.compile(r"^(\s*fx:\s*)[-\d.]+.*$", re.MULTILINE)
-_FY = re.compile(r"^(\s*fy:\s*)[-\d.]+.*$", re.MULTILINE)
-_NEEDS = re.compile(r"^(\s*needs_calibration:\s*)\w+.*$", re.MULTILINE)
+REPO = Path(__file__).resolve().parent.parent
 
 
 def solve_focal(known_height_m: float, distance_m: float, pixel_height_px: float) -> float:
@@ -44,20 +40,6 @@ def solve_focal(known_height_m: float, distance_m: float, pixel_height_px: float
             "[calibrate] --known-height-m, --distance-m, --pixel-height-px must be > 0"
         )
     return pixel_height_px * distance_m / known_height_m
-
-
-def write_focal(path: Path, focal: float) -> bool:
-    """Rewrite fx/fy + flip needs_calibration:false, preserving comments. Returns
-    True if the file changed."""
-    text = path.read_text(encoding="utf-8")
-    note = "  # calibrated by scripts/calibrate_camera.py (fy = h_px*Z/H_real)"
-    new = _FX.sub(rf"\g<1>{focal:.1f}{note}", text, count=1)
-    new = _FY.sub(rf"\g<1>{focal:.1f}", new, count=1)
-    new = _NEEDS.sub(r"\g<1>false", new, count=1)
-    if new == text:
-        return False
-    path.write_text(new, encoding="utf-8")
-    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -82,7 +64,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print("[calibrate] --dry-run: file unchanged.")
         return 0
-    if write_focal(path, focal):
+    if write_focal(
+        path,
+        focal,
+        note="  # calibrated by scripts/calibrate_camera.py (fy = h_px*Z/H_real)",
+    ):
         print(f"[calibrate] wrote fx=fy={focal:.1f}, needs_calibration: false -> {path}")
         print("[calibrate] re-select the tapo_c211 profile in the console to re-anchor live.")
     else:

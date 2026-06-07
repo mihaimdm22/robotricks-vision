@@ -287,3 +287,7 @@ class CatRanger:
         self._last_depth = None
         self._last_depth_conf = None
         self._last_t = time.perf_counter()
+
+    def set_preferred_target(self, track_id: int | None) -> None:
+        """Lock follow mode onto a specific tracker id (None = largest-box auto)."""
+        self.tracker.set_preferred_id(track_id)

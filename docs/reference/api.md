@@ -109,6 +109,18 @@ Reverts to the `dummy` robot.
 ### `GET /api/robot/discover`
 Enumerate serial ports / probe BLE (off the event loop). → device list.
 
+### `GET /api/robot/flash/readiness`
+Probe whether `arduino-cli` and the bundled sketch (`arduino/cat_ranger`) are available on the server.
+
+### `POST /api/robot/flash`
+```json
+{ "port": "/dev/cu.usbmodem14101" }
+```
+Compile + upload the CatRanger firmware over USB. Disconnects the runtime robot link first (the port cannot be shared). Poll `GET /api/robot/flash/status` until `state` is `done` or `error`.
+
+### `GET /api/robot/flash/status`
+Background flash job state: `idle | running | done | error`.
+
 ---
 
 ## REST — evaluation

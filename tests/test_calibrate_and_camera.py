@@ -59,11 +59,11 @@ def test_parse_rtsp() -> None:
 # --------------------------------------------------------------- re-anchor
 def test_reanchor_sets_profile_and_calibration_flag(tmp_path) -> None:
     rt = RobotRuntime(web_cfg={"history_db": str(tmp_path / "h.sqlite3")})
-    # tapo profile is a placeholder -> calibrated False, warning surfaced
+    # tapo profile is FOV-estimated and marked calibrated in configs/camera/
     res = rt.reanchor_camera("tapo_c211")
     assert res["ok"] is True and res["camera_profile"] == "tapo_c211"
-    assert res["calibrated"] is False and "UNCALIBRATED" in (res["warning"] or "")
-    assert rt.camera_profile == "tapo_c211" and rt.camera_calibrated is False
+    assert res["calibrated"] is True and res["warning"] is None
+    assert rt.camera_profile == "tapo_c211" and rt.camera_calibrated is True
     # go2 is calibrated -> no warning
     res2 = rt.reanchor_camera("go2_1080p")
     assert res2["calibrated"] is True and res2["warning"] is None

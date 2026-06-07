@@ -15,6 +15,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from catranger.web.controller import RobotController  # noqa: E402
+from catranger.web.flash_job import FlashJob  # noqa: E402
 from catranger.web.server import _mjpeg_chunk, create_app  # noqa: E402
 
 
@@ -65,6 +66,7 @@ class FakeRuntime:
         self._eval_result: dict | None = None
         self._train_running = False
         self._train_result: dict | None = None
+        self.flash_job = FlashJob()
 
     # lifecycle
     def start(self) -> None:
@@ -233,12 +235,52 @@ class FakeRuntime:
     def ptz_move(self, pan: float, tilt: float) -> dict:
         return {"ok": False, "code": "ptz_no_camera", "problem": "no tapo", "status": 409}
 
+    def list_library_cats(self, *, limit: int = 200) -> list:
+        return []
+
+    def get_library_cat(self, cat_id: int) -> dict | None:
+        return None
+
+    def rename_library_cat(self, cat_id: int, name: str) -> dict:
+        return {"ok": False}
+
+    def delete_library_cat(self, cat_id: int) -> dict:
+        return {"ok": False}
+
+    def find_library_cat(self, library_id: int, *, follow: bool = True) -> dict:
+        return {"ok": False, "error": "unknown library cat id"}
+
     def ptz_preset(self, name: str) -> dict:
         return {"ok": False, "code": "ptz_no_camera", "problem": "no tapo", "status": 409}
 
     # discovery (M5)
     def discover_devices(self) -> dict:
         return {"ok": True, "serial": [], "ble_available": False, "hint": "no serial ports found"}
+
+    # flash firmware (USB)
+    def flash_readiness(self) -> dict:
+        return {
+            "ok": True,
+            "arduino_cli": "/usr/bin/arduino-cli",
+            "sketch_dir": "arduino/cat_ranger",
+            "fqbn": "arduino:avr:mega",
+        }
+
+    def start_flash(self, port: str | None = None) -> dict:
+        if self.flash_job.status()["state"] == "running":
+            return {
+                "ok": False,
+                "code": "flash_busy",
+                "problem": "already running",
+                "status": 409,
+            }
+        self.connect_robot("dummy")
+        if not self.flash_job.start(port):
+            return {"ok": False, "code": "flash_busy", "problem": "already running", "status": 409}
+        return {"ok": True, "state": "running", "port": port}
+
+    def flash_status(self) -> dict:
+        return {"ok": True, **self.flash_job.status()}
 
     # durable job queue (WS-B3 backend)
     def jobs_status(self, limit: int = 200) -> dict:
@@ -399,6 +441,46 @@ def test_robot_discover_returns_a_list(client_and_runtime) -> None:
     body = client.get("/api/robot/discover").json()
     assert body["ok"] is True
     assert isinstance(body["serial"], list)
+
+
+def test_robot_flash_readiness(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    body = client.get("/api/robot/flash/readiness").json()
+    assert body["ok"] is True
+    assert "sketch_dir" in body
+    assert "fqbn" in body
+
+
+def test_robot_flash_start_and_status(client_and_runtime, monkeypatch) -> None:
+    client, rt = client_and_runtime
+    monkeypatch.setattr(
+        "catranger.hw.arduino_flash.flash_sketch",
+        lambda port, **kw: {"ok": True, "port": port, "log": "uploaded"},
+    )
+    assert client.get("/api/robot/flash/status").json()["state"] == "idle"
+    r = client.post("/api/robot/flash", json={"port": "/dev/ttyACM0"})
+    assert r.json()["ok"] is True
+    assert r.json()["state"] == "running"
+    # Wait for background thread
+    import time
+
+    for _ in range(50):
+        st = client.get("/api/robot/flash/status").json()
+        if st["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert st["state"] == "done"
+    assert st["result"]["ok"] is True
+
+
+def test_robot_flash_rejects_second_run(client_and_runtime) -> None:
+    from catranger.web.flash_job import FlashState
+
+    client, rt = client_and_runtime
+    rt.flash_job._state = FlashState.RUNNING
+    r = client.post("/api/robot/flash", json={"port": "/dev/ttyACM0"})
+    assert r.status_code == 409
+    assert r.json()["code"] == "flash_busy"
 
 
 def _wait_until_controller(ws) -> None:

@@ -74,3 +74,78 @@ def test_select_model_reports_load_failure_not_ml_missing_when_available() -> No
     assert res["ok"] is False
     assert res.get("code") == "model_load_failed"
     assert rt.perception_available is True  # availability flag is never clobbered
+
+
+def test_sonar_zone_and_peripheral_telemetry() -> None:
+    from catranger.hw.char_bridge import CharBridge
+
+    class _Ser:
+        def write(self, b: bytes) -> int:
+            return len(b)
+
+        def close(self) -> None:
+            pass
+
+    rt = _runtime()
+    bridge = CharBridge(transport=_Ser())
+    rt.controller.attach(bridge=bridge)
+    rt.controller.robot_connected = True
+    rt.controller.latest_telemetry["gt_cm"] = 45
+    t = rt.telemetry()
+    assert t["sonar_zone"] == "yellow"
+    assert t["buzzer_active"] is True
+    assert t["sonar_range_cm"] == 200
+    assert t["peripherals"]["buzzer"] is True
+
+    rt.controller.latest_telemetry["gt_cm"] = -1
+    t2 = rt.telemetry()
+    assert t2["sonar_no_echo"] is True
+    assert t2["sonar_display_cm"] == 45
+    assert t2["sonar_zone"] == "yellow"
+
+    res = rt.set_peripheral("buzzer_toggle")
+    assert res["ok"] is True
+    assert res["peripherals"]["buzzer"] is False
+
+
+def test_set_peripheral_requires_char_bridge() -> None:
+    rt = _runtime()
+    from catranger.hw.serial_bridge import DummyBridge
+
+    rt.controller.attach(bridge=DummyBridge())
+    rt.controller.robot_connected = True
+    assert rt.set_peripheral("buzzer_toggle")["ok"] is False
+
+
+def test_select_target_sets_preferred_and_follow() -> None:
+    rt = _runtime()
+    res = rt.select_target(42, follow=True)
+    assert res["ok"] is True
+    assert res["preferred_target_id"] == 42
+    assert res["mode"] == "FOLLOW"
+    assert rt._preferred_target_id == 42
+
+
+def test_find_library_cat_sets_search_mode(tmp_path) -> None:
+    rt = RobotRuntime(
+        {
+            "default_camera": "synthetic",
+            "cat_library_db": str(tmp_path / "lib.sqlite3"),
+        }
+    )
+    lib_id = rt.cat_library.upsert_sighting(
+        library_id=None,
+        tracker_id=3,
+        thumb_jpeg=b"face",
+        conf=0.8,
+        dist_m=1.0,
+        bearing_deg=-15.0,
+        name="Whiskers",
+    )
+    res = rt.find_library_cat(lib_id, follow=True)
+    assert res["ok"] is True
+    assert rt._find_library_id == lib_id
+    assert rt.controller.mode.value == "FOLLOW"
+    t = rt.telemetry()
+    assert t["find_library_id"] == lib_id
+    assert t["find_library_name"] == "Whiskers"
