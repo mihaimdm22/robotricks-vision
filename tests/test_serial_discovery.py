@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import sys
+from unittest.mock import MagicMock, patch
 
 from catranger.hw import serial_discovery as sd
 
@@ -15,9 +16,21 @@ def test_list_serial_ports_merges_pyserial_and_glob() -> None:
         vid = 0x1A86
         pid = 0x7523
 
+    mock_list_ports = MagicMock()
+    mock_list_ports.comports.return_value = [Port()]
+    mock_tools = MagicMock()
+    mock_tools.list_ports = mock_list_ports
+    mock_serial = MagicMock()
+    mock_serial.tools = mock_tools
+    serial_modules = {
+        "serial": mock_serial,
+        "serial.tools": mock_tools,
+        "serial.tools.list_ports": mock_list_ports,
+    }
+
     with (
         patch.object(sd, "glob") as mock_glob,
-        patch("serial.tools.list_ports.comports", return_value=[Port()]),
+        patch.dict(sys.modules, serial_modules),
     ):
         mock_glob.glob.side_effect = lambda pattern: (
             ["/dev/cu.usbserial-1410", "/dev/cu.Bluetooth-Incoming-Port"]
