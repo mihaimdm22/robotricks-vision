@@ -29,6 +29,10 @@ from catranger.web.registry import ModelProfile, ModelRegistry
 from catranger.web.store import DistanceStore
 from catranger.web.train_job import TrainJob
 
+# Repo root, so runs/ paths resolve correctly no matter the server's CWD
+# (`catranger serve` does not chdir here; archives live under the repo root).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def _ml_available() -> bool:
     return (
@@ -144,7 +148,8 @@ class RobotRuntime:
     # ------------------------------------------------------------- lifecycle
     def start(self) -> None:
         self.connect_robot(str(self.cfg.get("default_robot", "dummy")))
-        self.connect_camera(self.camera_spec)
+        # use the RAW spec (camera_spec is redacted — would connect with ***).
+        self.connect_camera(self._raw_camera_spec)
         self.select_model(self.active_model.id)
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="control-loop", daemon=True)
@@ -793,18 +798,21 @@ class RobotRuntime:
 
         weights = str(params.get("weights") or "").strip()
         run_dir = str(params.get("run_dir") or "").strip()
+        history_root = (_REPO_ROOT / "runs" / "history").resolve()
         # Resolve the weights to promote, in order of specificity:
         #   explicit weights > a history run dir's archived best.pt > the
         #   autoresearch winner > the stable published path train.py writes.
+        # Paths are anchored to the repo root (the server's CWD is not guaranteed)
+        # and run_dir is contained to runs/history (no `../` traversal).
         if not weights and run_dir:
-            cand = Path("runs/history") / run_dir / "best.pt"
-            if cand.exists():
+            cand = (history_root / run_dir / "best.pt").resolve()
+            if cand.is_relative_to(history_root) and cand.exists():
                 weights = str(cand)
         if not weights:
             winner = promote_mod.read_winner()
             weights = str((winner or {}).get("published_weights") or "").strip()
         if not weights:
-            stable = Path("runs/train/best.pt")
+            stable = _REPO_ROOT / "runs" / "train" / "best.pt"
             if stable.exists():
                 weights = str(stable)
         if not weights:
