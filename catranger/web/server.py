@@ -150,7 +150,7 @@ def create_app(runtime: Any) -> FastAPI:
         return runtime.status()
 
     @app.post("/api/control")
-    def control(intent: ControlIntent) -> dict:
+    def control(intent: ControlIntent) -> dict[str, Any] | JSONResponse:
         try:
             runtime.set_manual(intent.action, intent.value)
         except ValueError as exc:
@@ -163,7 +163,7 @@ def create_app(runtime: Any) -> FastAPI:
         return {"ok": True}
 
     @app.post("/api/mode")
-    def mode(intent: ModeIntent) -> dict:
+    def mode(intent: ModeIntent) -> dict[str, Any] | JSONResponse:
         target = intent.mode.upper()
         # T1: a training run owns the GPU — refuse a drive switch (no silent kill).
         if target in ("MANUAL", "FOLLOW") and getattr(runtime, "training_active", False):
@@ -206,10 +206,15 @@ def create_app(runtime: Any) -> FastAPI:
     @app.get("/api/models")
     def models() -> dict:
         s = runtime.status()
-        return {"models": s["models"], "active": s["model"], "status": s["model_status"]}
+        return {
+            "ok": True,
+            "models": s["models"],
+            "active": s["model"],
+            "status": s["model_status"],
+        }
 
     @app.post("/api/models/select")
-    def select_model(sel: ModelSelect) -> dict:
+    def select_model(sel: ModelSelect) -> dict[str, Any] | JSONResponse:
         try:
             return runtime.select_model(sel.id)
         except KeyError:

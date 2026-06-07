@@ -44,11 +44,20 @@ class CatTracker:
     def reset(self) -> None:
         """Clear all lock/coast state (call between independent clips)."""
         self.locked_id: int | None = None
+        self.known_ids: set[int] = set()
         self._challenger_id: int | None = None
         self._challenger_count: int = 0
         # last Detection we returned as the target, for coasting across a missed frame
         self._last_target: Detection | None = None
         self._coast_frames: int = 0
+
+    def _note_id(self, track_id: int | None) -> None:
+        if track_id is not None:
+            self.known_ids.add(int(track_id))
+
+    def _clear_identity(self) -> None:
+        """Drop accumulated tracker ids when the target is fully lost."""
+        self.known_ids.clear()
 
     # ---- per-frame ----
     def update(self, frame_bgr: np.ndarray) -> list[Detection]:
@@ -71,6 +80,7 @@ class CatTracker:
             self.locked_id = None
             self._challenger_id = None
             self._challenger_count = 0
+            self._clear_identity()
             return None
 
         # largest box = the natural target candidate this frame
@@ -91,7 +101,9 @@ class CatTracker:
 
         if self.locked_id is None:
             # acquire: lock immediately onto the best box's id.
+            self._clear_identity()
             self.locked_id = best.track_id
+            self._note_id(best.track_id)
             self._challenger_id = None
             self._challenger_count = 0
             self._coast_frames = 0
@@ -109,7 +121,9 @@ class CatTracker:
                 self._coast_frames = 1
                 return self._last_target
             # coast budget spent: hand the lock to whatever is best now.
+            self._note_id(self.locked_id)
             self.locked_id = best.track_id
+            self._note_id(best.track_id)
             self._challenger_id = None
             self._challenger_count = 0
             self._coast_frames = 0
@@ -148,7 +162,9 @@ class CatTracker:
             self._challenger_count = 1
 
     def _commit_challenger(self, det: Detection) -> None:
+        self._note_id(self.locked_id)
         self.locked_id = det.track_id
+        self._note_id(det.track_id)
         self._challenger_id = None
         self._challenger_count = 0
         self._coast_frames = 0

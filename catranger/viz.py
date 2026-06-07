@@ -43,20 +43,21 @@ def draw(
 
     h, w = img.shape[:2]
     target = result.target if result is not None else None
-    target_id = target.track_id if target is not None else None
+    known_ids = list(result.target_known_ids) if result is not None else []
 
     for obs in result.observations if result is not None else []:
         det = obs.detection
         x1, y1, x2, y2 = (int(round(v)) for v in det.xyxy)
-        is_target = (
-            target is not None and det.track_id is not None and det.track_id == target_id
-        ) or (target is not None and obs is target)
+        is_target = target is not None and obs is target
         color = _GREEN if is_target else _YELLOW
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 2 if is_target else 1)
 
-        # label: id + distance +/- CI
-        tid = det.track_id if det.track_id is not None else -1
-        parts = [f"id={tid}"]
+        # label: id(s) + distance +/- CI
+        if is_target and known_ids:
+            tid_label = "/".join(str(i) for i in known_ids)
+        else:
+            tid_label = str(det.track_id if det.track_id is not None else -1)
+        parts = [f"id={tid_label}"]
         if obs.distance is not None and math.isfinite(obs.distance.meters):
             parts.append(f"{obs.distance.meters:.2f}m")
             hw = obs.distance.half_width

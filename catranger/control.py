@@ -128,9 +128,11 @@ class Follower:
         z = float(target.distance.meters)
 
         # target-lock hysteresis / acquire counter
+        known = set(result.target_known_ids or [])
         if self.target_id != det.track_id:
+            if self.target_id is None or det.track_id not in known:
+                self._acquire_count = 0
             self.target_id = det.track_id
-            self._acquire_count = 0
 
         # ---------------- SAFE: too close -> back off / stop ----------------
         if z < self.safe_distance:

@@ -37,6 +37,13 @@ def test_frame_target_is_largest_box() -> None:
     assert fr.target is big
 
 
+def test_frame_target_prefers_explicit_observation() -> None:
+    small = CatObservation(detection=Detection(xyxy=(0.0, 0.0, 10.0, 10.0), conf=0.5, cls_id=15))
+    big = CatObservation(detection=Detection(xyxy=(0.0, 0.0, 100.0, 100.0), conf=0.5, cls_id=15))
+    fr = FrameResult(frame_index=0, observations=[small, big], target_observation=small)
+    assert fr.target is small
+
+
 def test_command_as_dict_rounds_and_carries_state() -> None:
     d = Command(rotation=0.123456, v_fwd=-0.2, state="TRACK", target_id=3).as_dict()
     assert d["rotation"] == pytest.approx(0.1235, abs=1e-4)

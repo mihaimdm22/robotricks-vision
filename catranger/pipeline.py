@@ -85,6 +85,15 @@ class CatRanger:
 
         # ---- tracker name ----
         self.tracker_name = app.get("tracker", "name", default="botsort.yaml")
+        lock_hysteresis = int(app.get("tracker", "lock_hysteresis", default=5) or 5)
+
+        from catranger.track import CatTracker  # lazy: uses Detector
+
+        self.tracker = CatTracker(
+            self.detector,
+            tracker_name=self.tracker_name,
+            lock_hysteresis=lock_hysteresis,
+        )
 
         # ---- depth net (optional) ----
         depth_cfg = app.get("depth", default={}) or {}
@@ -118,13 +127,27 @@ class CatRanger:
 
     # ---- helpers ----
     def _speed(
-        self, track_id: int | None, frame_index: int, center: tuple[float, float], z: float
+        self,
+        track_id: int | None,
+        known_ids: list[int],
+        frame_index: int,
+        center: tuple[float, float],
+        z: float,
     ) -> float | None:
         """Approach speed in m/s (positive = closing). Uses d(Z)/dt over the track
-        history with a ~15 FPS assumption for the time base."""
+        history with a ~15 FPS assumption for the time base. Falls back across alias
+        ids when BoT-SORT reassigns the same cat."""
         if track_id is None or not np.isfinite(z):
             return None
-        hist = self._history.setdefault(track_id, deque(maxlen=_HISTORY_LEN))
+        lookup_ids = [track_id] + [i for i in known_ids if i != track_id]
+        hist: deque[tuple[int, tuple[float, float], float]] | None = None
+        for tid in lookup_ids:
+            candidate = self._history.get(tid)
+            if candidate:
+                hist = candidate
+                break
+        if hist is None:
+            hist = self._history.setdefault(track_id, deque(maxlen=_HISTORY_LEN))
         speed: float | None = None
         if hist:
             f0, _c0, z0 = hist[0]
@@ -147,7 +170,9 @@ class CatRanger:
         self.last_undistorted = frame
         h, w = frame.shape[:2]
 
-        dets: list[Detection] = self.detector.track(frame, tracker=self.tracker_name, persist=True)
+        dets: list[Detection] = self.tracker.update(frame)
+        target_det = self.tracker.select_target(dets)
+        known_ids = sorted(self.tracker.known_ids)
 
         # depth: run every Nth frame, cache otherwise
         depth_map = self._last_depth
@@ -167,7 +192,7 @@ class CatRanger:
             cx, _cy = det.center
             bearing = self.camera.bearing_deg(cx)
             z = dist.meters if (dist and np.isfinite(dist.meters)) else float("nan")
-            speed = self._speed(det.track_id, frame_index, det.center, z)
+            speed = self._speed(det.track_id, known_ids, frame_index, det.center, z)
             observations.append(
                 CatObservation(
                     detection=det,
@@ -177,10 +202,15 @@ class CatRanger:
                 )
             )
 
-        # prune history of tracks no longer present
+        target_observation = self._resolve_target_observation(
+            target_det, observations, depth_map, depth_conf, frame_index, known_ids
+        )
+
+        # prune history of tracks no longer present (keep aliases for the followed cat)
         live_ids = {o.track_id for o in observations if o.track_id is not None}
+        alias_ids = set(known_ids)
         for tid in list(self._history.keys()):
-            if tid not in live_ids:
+            if tid not in live_ids and tid not in alias_ids:
                 del self._history[tid]
 
         # pairwise inter-object metric distances
@@ -215,9 +245,44 @@ class CatRanger:
             fps=fps,
             width=int(w),
             height=int(h),
+            target_observation=target_observation,
+            target_known_ids=known_ids,
+        )
+
+    def _resolve_target_observation(
+        self,
+        target_det: Detection | None,
+        observations: list[CatObservation],
+        depth_map: np.ndarray | None,
+        depth_conf: np.ndarray | None,
+        frame_index: int,
+        known_ids: list[int],
+    ) -> CatObservation | None:
+        if target_det is None:
+            return None
+        for obs in observations:
+            if obs.detection is target_det:
+                return obs
+        tid = target_det.track_id
+        if tid is not None:
+            for obs in observations:
+                if obs.track_id == tid:
+                    return obs
+        # Coast frame: locked id vanished but tracker still returns the last box.
+        dist = self.distance.estimate(target_det, depth_map=depth_map, depth_conf=depth_conf)
+        cx, _cy = target_det.center
+        bearing = self.camera.bearing_deg(cx)
+        z = dist.meters if (dist and np.isfinite(dist.meters)) else float("nan")
+        speed = self._speed(tid, known_ids, frame_index, target_det.center, z)
+        return CatObservation(
+            detection=target_det,
+            distance=dist,
+            bearing_deg=bearing,
+            speed_mps=speed,
         )
 
     def reset(self) -> None:
+        self.tracker.reset()
         self._history.clear()
         self._last_depth = None
         self._last_depth_conf = None
