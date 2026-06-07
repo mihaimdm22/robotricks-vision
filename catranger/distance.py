@@ -40,6 +40,32 @@ def _weighted_median(values: Sequence[float], weights: Sequence[float]) -> float
     return float(z[idx])
 
 
+def _erode_box(
+    x1: float, y1: float, x2: float, y2: float, frac: float
+) -> tuple[float, float, float, float]:
+    """Shrink a box toward its center, keeping the central ``(1-frac)`` fraction on each
+    axis (WS-D1). The depth median is then sampled from the object interior instead of the
+    background that bleeds in at a loose box's edges. ``frac`` in [0, 0.9]; 0 = no change."""
+    if frac <= 0.0:
+        return x1, y1, x2, y2
+    f = min(frac, 0.9)  # never collapse the box to nothing
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    half_w = abs(x2 - x1) * (1.0 - f) / 2.0
+    half_h = abs(y2 - y1) * (1.0 - f) / 2.0
+    return cx - half_w, cy - half_h, cx + half_w, cy + half_h
+
+
+def _box_slice(
+    x1: float, y1: float, x2: float, y2: float, w: int, h: int
+) -> tuple[int, int, int, int]:
+    """Integer slice indices for a box, clipped to a (w, h) map."""
+    xi1 = int(max(0, min(w - 1, np.floor(min(x1, x2)))))
+    yi1 = int(max(0, min(h - 1, np.floor(min(y1, y2)))))
+    xi2 = int(max(0, min(w, np.ceil(max(x1, x2)))))
+    yi2 = int(max(0, min(h, np.ceil(max(y1, y2)))))
+    return xi1, yi1, xi2, yi2
+
+
 class DistanceEstimator:
     """Turn a Detection (+ optional depth map) into a metric DistanceResult."""
 
@@ -48,10 +74,15 @@ class DistanceEstimator:
         camera: CameraModel,
         size_priors: dict[str, dict],
         conformal_q: float | None = None,
+        box_erosion: float = 0.0,
     ):
         self.camera = camera
         self.size_priors = size_priors or {}
         self.conformal_q = conformal_q
+        # WS-D1: fraction to shrink each detection box before taking the in-box depth
+        # median (kills background-depth bleed at the edges). 0.0 = off (unchanged
+        # baseline); activate only when keep/reject shows it lowers distance MAE.
+        self.box_erosion = float(box_erosion or 0.0)
         # per-class multiplicative correction (filled by calibrate_scale)
         self.alpha: dict[str, float] = {}
 
@@ -111,13 +142,14 @@ class DistanceEstimator:
         dm = np.asarray(depth_map)
         h, w = dm.shape[:2]
         x1, y1, x2, y2 = det.xyxy
-        # clip box to map bounds
-        xi1 = int(max(0, min(w - 1, np.floor(min(x1, x2)))))
-        yi1 = int(max(0, min(h - 1, np.floor(min(y1, y2)))))
-        xi2 = int(max(0, min(w, np.ceil(max(x1, x2)))))
-        yi2 = int(max(0, min(h, np.ceil(max(y1, y2)))))
+        # WS-D1: sample the eroded (central) box to avoid background bleed; if erosion
+        # collapses the box (tiny/distant cat), fall back to the full box, then to NaN.
+        ex1, ey1, ex2, ey2 = _erode_box(x1, y1, x2, y2, self.box_erosion)
+        xi1, yi1, xi2, yi2 = _box_slice(ex1, ey1, ex2, ey2, w, h)
         if xi2 <= xi1 or yi2 <= yi1:
-            return float("nan"), 0.0
+            xi1, yi1, xi2, yi2 = _box_slice(x1, y1, x2, y2, w, h)
+            if xi2 <= xi1 or yi2 <= yi1:
+                return float("nan"), 0.0
         patch = dm[yi1:yi2, xi1:xi2].astype(np.float64).ravel()
         valid = np.isfinite(patch) & (patch > 0)
         patch = patch[valid]

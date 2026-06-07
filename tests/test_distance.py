@@ -11,7 +11,7 @@ import math
 import numpy as np
 import pytest
 
-from catranger.distance import DistanceEstimator, _weighted_median
+from catranger.distance import DistanceEstimator, _erode_box, _weighted_median
 from catranger.intrinsics import CameraModel
 from catranger.types import Detection
 
@@ -90,3 +90,39 @@ def test_calibrate_scale_skips_bad_pairs(cam: CameraModel) -> None:
 
 def test_calibrate_scale_empty_is_empty(cam: CameraModel) -> None:
     assert DistanceEstimator(cam, {}).calibrate_scale([]) == {}
+
+
+# ---- WS-D1: eroded-box depth median ----
+
+
+def test_erode_box_keeps_central_fraction() -> None:
+    # 100-wide, 100-tall box, frac 0.2 -> keep central 80% (10px margin each side).
+    assert _erode_box(0.0, 0.0, 100.0, 100.0, 0.2) == (10.0, 10.0, 90.0, 90.0)
+
+
+def test_erode_box_noop_when_frac_zero() -> None:
+    assert _erode_box(5.0, 6.0, 7.0, 8.0, 0.0) == (5.0, 6.0, 7.0, 8.0)
+
+
+def test_box_erosion_excludes_edge_background_from_depth_median(cam: CameraModel) -> None:
+    # Build a depth map where the detection box is mostly far background (5.0) with a
+    # central object region (1.0). Eroding the box should sample the object, not the edges.
+    det = _det()  # box (900,400)-(1020,580): 120 wide, 180 tall
+    dm = np.full((1080, 1920), 5.0, dtype=np.float64)
+    dm[445:535, 930:990] = 1.0  # central ~50% of the box = the "cat"
+
+    no_erode = DistanceEstimator(cam, _PRIOR).estimate(det, depth_map=dm)
+    eroded = DistanceEstimator(cam, _PRIOR, box_erosion=0.6).estimate(det, depth_map=dm)
+
+    assert no_erode.components["depth"] == pytest.approx(5.0)  # edges dominate the full box
+    assert eroded.components["depth"] == pytest.approx(1.0)  # eroded box sees the object
+
+
+def test_box_erosion_falls_back_to_full_box_when_it_would_collapse(cam: CameraModel) -> None:
+    # A 1px box + heavy erosion would collapse to nothing; we must fall back to the full
+    # box (a real, if noisy, reading) rather than drop the detection to NaN.
+    tiny = Detection(xyxy=(900.0, 400.0, 901.0, 401.0), conf=0.9, cls_id=15, cls_name="cat")
+    dm = np.full((1080, 1920), 2.0, dtype=np.float64)
+    z, w = DistanceEstimator(cam, _PRIOR, box_erosion=0.8)._depth(tiny, dm, None)
+    assert z == pytest.approx(2.0)
+    assert w == 1.0

@@ -37,6 +37,19 @@ def is_stream(source: str) -> bool:
     return str(source).lower().startswith(("rtsp://", "http://", "https://", "udp://"))
 
 
+def image_files(path: str | Path) -> list[Path]:
+    """Image files in a directory, in the SAME natural-sorted order frame_source yields
+    them — so a distance-GT sidecar (catranger.eval.gts) can be keyed by that 0-based
+    index. Returns [] for a non-directory. Stdlib only (no cv2): lists, never reads."""
+    p = Path(path)
+    if not p.is_dir():
+        return []
+    return sorted(
+        (f for f in p.iterdir() if f.suffix.lower() in IMAGE_EXTS),
+        key=lambda f: _natural_key(f.name),
+    )
+
+
 def frame_source(
     source: str, stride: int = 1, max_frames: int = 0
 ) -> Iterator[tuple[int, np.ndarray]]:
@@ -57,11 +70,7 @@ def frame_source(
 
     p = Path(s)
     if p.is_dir():
-        files = sorted(
-            [f for f in p.iterdir() if f.suffix.lower() in IMAGE_EXTS],
-            key=lambda f: _natural_key(f.name),
-        )
-        for i, f in enumerate(files):
+        for i, f in enumerate(image_files(p)):
             if max_frames and i >= max_frames:
                 break
             img = cv2.imread(str(f))

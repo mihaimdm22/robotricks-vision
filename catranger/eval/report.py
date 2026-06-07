@@ -18,6 +18,7 @@ import math
 import time
 from pathlib import Path
 
+from catranger.eval.gts import align_preds_gts, load_gts
 from catranger.eval.metrics import (
     distance_mae,
     fps_stats,
@@ -233,6 +234,8 @@ def run_eval_job(
     config: str = "cat_distance",
     camera: str | None = None,
     approach: str = "A",
+    model: str | None = None,
+    models_config: str = "configs/models.yaml",
     classes: str | None = None,
     use_depth: bool = True,
     device: str | None = None,
@@ -240,6 +243,7 @@ def run_eval_job(
     max_frames: int = 0,
     out: str = "outputs/report/report.md",
     gts: dict[str, list[float]] | None = None,
+    gt_distances: dict[int, float] | None = None,
     progress: object = None,
     cancel: object = None,
 ) -> dict:
@@ -251,6 +255,10 @@ def run_eval_job(
     it returns True. Heavy deps (torch/ultralytics) are imported HERE so the
     module stays light for callers that only need build_report().
 
+    `gt_distances` (WS-D0.1) is a {frame_index: true_meters} sidecar; when given,
+    the target's predicted distance is collected per frame and paired with it to
+    populate the distance MAE/MAPE section (overrides any pre-built `gts`).
+
     Returns {"metrics", "report_path", "report_text", "n_frames", "approach"}.
     """
     from catranger.config import load_app, load_camera
@@ -261,18 +269,34 @@ def run_eval_job(
     app = load_app(config)
     if camera:
         app.camera = load_camera(camera)
+
+    # WS-C3: --model resolves against configs/models.yaml (the one model home); else the
+    # config's approach_a/approach_b slots via --approach A|B.
+    if model:
+        from catranger.web.registry import ModelRegistry, apply_profile
+
+        profile = ModelRegistry.from_yaml(models_config).get(model)
+        approach_key = apply_profile(app, profile)
+        approach_label = model
+    else:
+        approach_key = "approach_a" if str(approach).upper() == "A" else "approach_b"
+        approach_label = approach_key
+
+    # An explicit --classes wins over a profile's classes (set above).
     if classes is not None:
         app.raw["classes"] = (
             None if classes.lower() == "all" else [int(c) for c in classes.split(",") if c.strip()]
         )
 
-    approach_key = "approach_a" if str(approach).upper() == "A" else "approach_b"
     ranger = CatRanger(app, approach=approach_key, use_depth=use_depth, device=device)
     follower = Follower(app.get("follow", default={}))
 
     results: list[FrameResult] = []
     commands: list[Command] = []
     frame_times: list[float] = []
+    # WS-D0.1: when a GT sidecar is given, collect the target's predicted distance
+    # per frame index so we can pair it with the true distance after the run.
+    preds_by_index: dict[int, float] = {}
 
     unbounded = max_frames == 0 and (is_stream(source) or str(source).isdigit())
     total = None if unbounded else (max_frames or None)
@@ -286,17 +310,24 @@ def run_eval_job(
         frame_times.append(time.perf_counter() - t0)
         results.append(result)
         commands.append(follower.step(result))
+        if gt_distances:
+            tgt = result.target
+            if tgt is not None and tgt.distance is not None and math.isfinite(tgt.distance.meters):
+                preds_by_index[idx] = float(tgt.distance.meters)
         if progress is not None:
             progress(done, total)  # type: ignore[operator]
 
     if not results:
         raise ValueError(f"no frames processed from source {source!r} — nothing to report")
 
+    # GT sidecar wins over a pre-built {"preds","gts"} dict: build the aligned pairs.
+    if gt_distances:
+        gts = align_preds_gts(preds_by_index, gt_distances)
     metrics = run_eval(results, commands, frame_times, gts=gts)
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     report_path = build_report(
-        metrics, str(out_path), title=f"CatRanger performance report — {approach_key}"
+        metrics, str(out_path), title=f"CatRanger performance report — {approach_label}"
     )
     report_text = out_path.read_text(encoding="utf-8")
     return {
@@ -304,7 +335,7 @@ def run_eval_job(
         "report_path": report_path,
         "report_text": report_text,
         "n_frames": len(results),
-        "approach": approach_key,
+        "approach": approach_label,
     }
 
 
@@ -324,6 +355,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", default="cat_distance", help="task config (configs/<name>.yaml)")
     ap.add_argument("--camera", default=None, help="override camera config (e.g. tapo_c211)")
     ap.add_argument("--approach", default="A", choices=["A", "B"], help="A=YOLO11, B=RT-DETR")
+    ap.add_argument(
+        "--model",
+        default=None,
+        help="model id from configs/models.yaml (WS-C3; overrides --approach). "
+        "GET /api/models or see configs/models.yaml for ids.",
+    )
     ap.add_argument(
         "--classes",
         default=None,
@@ -346,6 +383,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="also dump the structured metrics dict here (for run-history archival)",
     )
+    ap.add_argument(
+        "--gts",
+        default=None,
+        help="distance ground-truth sidecar (JSON frame-index -> meters) to enable the "
+        "distance MAE/MAPE section. Template: configs/eval/how_far.gts.example.json",
+    )
     args = ap.parse_args(argv)
 
     print(
@@ -353,22 +396,33 @@ def main(argv: list[str] | None = None) -> int:
         f"depth={'off' if args.no_depth else 'on'}"
     )
     # The provided inference sets ship NO distance labels, so MAE/MAPE are skipped
-    # (gts=None). Pass a gts.json sidecar / labels to populate them (see the web tab).
+    # unless you pass --gts (WS-D0.1). A bad sidecar fails loud (it's a tooling path,
+    # never the baseline demo), so load it before the heavy run.
+    gt_distances = None
+    if args.gts:
+        try:
+            gt_distances = load_gts(args.gts)
+        except ValueError as exc:
+            print(f"[eval] {exc}")
+            return 1
+        print(f"[eval] distance GT: {len(gt_distances)} labeled frame(s) from {args.gts}")
     try:
         out = run_eval_job(
             args.source,
             config=args.config,
             camera=args.camera,
             approach=args.approach,
+            model=args.model,
             classes=args.classes,
             use_depth=not args.no_depth,
             device=args.device,
             stride=args.stride,
             max_frames=args.max_frames,
             out=args.out,
-            gts=None,
+            gt_distances=gt_distances,
         )
-    except ValueError as exc:
+    except (ValueError, KeyError) as exc:
+        # KeyError: an unknown --model id (registry.get gives a 'have: [...]' hint).
         print(f"[eval] {exc}")
         return 1
 

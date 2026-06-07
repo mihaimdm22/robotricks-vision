@@ -105,7 +105,10 @@ class CatRanger:
 
         # ---- distance estimator ----
         conformal_q = app.get("uncertainty", "conformal_q", default=None)
-        self.distance = DistanceEstimator(self.camera, app.size_priors, conformal_q=conformal_q)
+        box_erosion = float(app.get("depth", "box_erosion", default=0.0) or 0.0)
+        self.distance = DistanceEstimator(
+            self.camera, app.size_priors, conformal_q=conformal_q, box_erosion=box_erosion
+        )
 
         # ---- per-track history for speed: track_id -> deque[(frame_index, center, Z)] ----
         self._history: dict[int, deque[tuple[int, tuple[float, float], float]]] = {}

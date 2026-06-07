@@ -210,6 +210,14 @@ class FakeRuntime:
     def discover_devices(self) -> dict:
         return {"ok": True, "serial": [], "ble_available": False, "hint": "no serial ports found"}
 
+    # durable job queue (WS-B3 backend)
+    def jobs_status(self, limit: int = 200) -> dict:
+        return {
+            "ok": True,
+            "jobs": [{"run_key": "ov-0", "kind": "eval", "status": "ok"}],
+            "counts": {"ok": 1},
+        }
+
 
 @pytest.fixture
 def client_and_runtime():
@@ -336,6 +344,14 @@ def test_eval_report_404_until_done_then_returns_payload(client_and_runtime) -> 
     body = client.get("/api/eval/report").json()
     assert body["ok"] is True
     assert body["markdown"] == "# report"
+
+
+def test_jobs_route_returns_queue_state(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    body = client.get("/api/jobs").json()
+    assert body["ok"] is True
+    assert body["counts"] == {"ok": 1}
+    assert body["jobs"][0]["run_key"] == "ov-0"
 
 
 def test_robot_discover_returns_a_list(client_and_runtime) -> None:

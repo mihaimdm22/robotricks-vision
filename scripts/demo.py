@@ -40,6 +40,14 @@ def parse_args():
     p.add_argument("--camera", default=None, help="override camera config (e.g. tapo_c211)")
     p.add_argument("--approach", default="A", choices=["A", "B"], help="A=YOLO11, B=RT-DETR")
     p.add_argument(
+        "--model",
+        default=None,
+        help="model id from configs/models.yaml (overrides --approach; same registry the web tab uses)",
+    )
+    p.add_argument(
+        "--models-config", default="configs/models.yaml", help="model registry path (with --model)"
+    )
+    p.add_argument(
         "--classes",
         default=None,
         help="override detected classes: 'all', or comma-sep COCO ids (e.g. 15 for cat, '0,56' people+chairs)",
@@ -87,14 +95,26 @@ def main():
     app = load_app(args.config)
     if args.camera:
         app.camera = load_camera(args.camera)
-    if args.classes is not None:
+
+    # --model resolves against configs/models.yaml (the one model home); else approach_a/b.
+    if args.model:
+        from catranger.web.registry import ModelRegistry, apply_profile
+
+        try:  # an unknown id gives a clean message (with a 'have: [...]' hint), not a trace
+            profile = ModelRegistry.from_yaml(args.models_config).get(args.model)
+        except KeyError as exc:
+            raise SystemExit(f"[demo] {exc}") from None
+        approach = apply_profile(app, profile)
+    else:
+        approach = "approach_a" if args.approach == "A" else "approach_b"
+
+    if args.classes is not None:  # explicit --classes wins over the profile's
         app.raw["classes"] = (
             None
             if args.classes.lower() == "all"
             else [int(c) for c in args.classes.split(",") if c.strip()]
         )
 
-    approach = "approach_a" if args.approach == "A" else "approach_b"
     ranger = CatRanger(app, approach=approach, use_depth=not args.no_depth, device=args.device)
 
     # resolve the robot link: --ble wins, else --hw-port (USB or BT-SPP), else none

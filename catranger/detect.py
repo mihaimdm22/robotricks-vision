@@ -25,6 +25,32 @@ _INSTALL_HINT = (
 )
 
 
+def _build_yolo(weights: str):
+    from ultralytics import YOLO  # heavy import, kept inside the builder
+
+    return YOLO(weights)
+
+
+def _build_rtdetr(weights: str):
+    from ultralytics import RTDETR  # heavy import, kept inside the builder
+
+    return RTDETR(weights)
+
+
+# The detector-backend registry — the SINGLE place backends live. To add a backend,
+# add a builder here (and a results->Detection mapping if it isn't Ultralytics-shaped).
+# configs/models.yaml validation (catranger.web.registry) reads these names, so the two
+# can never drift. Builders import their heavy lib lazily, so this dict (and the names
+# below) stay torch-free — listing models never pulls in ultralytics/torch.
+_BACKENDS = {"yolo": _build_yolo, "rtdetr": _build_rtdetr}
+
+
+def backend_names() -> frozenset[str]:
+    """Registered detector-backend names — the source of truth models.yaml validates
+    against (so adding a backend is a one-file change in detect.py)."""
+    return frozenset(_BACKENDS)
+
+
 class Detector:
     """Thin wrapper over an Ultralytics model exposing detect() and track().
 
@@ -64,18 +90,16 @@ class Detector:
         if self._model is not None:
             return self._model
         try:
-            from ultralytics import RTDETR, YOLO  # heavy import, kept local
-        except Exception as err:  # pragma: no cover - exercised only without the dep
-            raise ImportError(_INSTALL_HINT.format(err=err)) from err
-
-        if self.backend == "rtdetr":
-            self._model = RTDETR(self.weights)
-        elif self.backend == "yolo":
-            self._model = YOLO(self.weights)
-        else:
+            builder = _BACKENDS[self.backend]
+        except KeyError:
             raise ValueError(
-                f"unknown detector backend {self.backend!r} (expected 'yolo' or 'rtdetr')"
-            )
+                f"unknown detector backend {self.backend!r}; register it in "
+                f"catranger/detect.py _BACKENDS (have: {sorted(_BACKENDS)})"
+            ) from None
+        try:
+            self._model = builder(self.weights)
+        except ImportError as err:  # pragma: no cover - exercised only without the dep
+            raise ImportError(_INSTALL_HINT.format(err=err)) from err
         return self._model
 
     @property

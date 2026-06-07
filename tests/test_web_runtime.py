@@ -41,6 +41,27 @@ def test_perceive_error_keeps_perception_available_and_reports_error() -> None:
     assert rt.model_error  # a human-readable reason is captured for the UI
 
 
+def test_jobs_status_empty_when_no_queue_then_reflects_recorded(tmp_path) -> None:
+    # WS-B3 backend: jobs_status reads the durable queue (creating nothing until a job is
+    # recorded), then reflects recorded sweeps/evals for the live panel.
+    db = tmp_path / "jq.sqlite3"
+    rt = RobotRuntime({"default_camera": "synthetic", "jobqueue_db": str(db)})
+    assert rt.jobs_status() == {"ok": True, "jobs": [], "counts": {}}
+    assert not db.exists()  # a pure read must not create the queue file
+
+    rt._record_job("web-eval-1", "web-eval", {"source": "x"})
+    status = rt.jobs_status()
+    assert status["counts"] == {"running": 1}
+    assert status["jobs"][0]["run_key"] == "web-eval-1"
+    rt._settle_job("web-eval-1", "ok")
+    assert rt.jobs_status()["counts"] == {"ok": 1}
+    # WS-A7 unification: a web TRAIN job records into the same durable queue.
+    rt._record_job("web-train-1", "web-train", {"kind": "autoresearch"})
+    assert rt.jobs_status()["counts"] == {"ok": 1, "running": 1}
+    rt._settle_job("web-train-1", "ok")
+    assert rt.jobs_status()["counts"] == {"ok": 2}
+
+
 def test_select_model_reports_load_failure_not_ml_missing_when_available() -> None:
     rt = _runtime()
     rt.perception_available = True

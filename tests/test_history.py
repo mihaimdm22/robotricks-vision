@@ -54,6 +54,29 @@ def test_archive_eval_run_writes_files_and_index(tmp_path: Path) -> None:
     assert entries[0]["metric"] == 22.5
 
 
+def test_artifact_copy_is_atomic_with_sha256(tmp_path: Path) -> None:
+    # WS-A6: artifacts copy via temp+os.replace and record a sha256 for corruption checks.
+    import hashlib
+
+    payload = b"weights-bytes-\x00\x01\x02-123"
+    src = tmp_path / "best.pt"
+    src.write_bytes(payload)
+
+    run_dir = history.archive_run(
+        "train",
+        ts="20260606-2306-0",
+        artifacts={"best.pt": str(src)},
+        base=tmp_path / "history",
+    )
+    assert (run_dir / "best.pt").read_bytes() == payload
+    meta = json.loads((run_dir / "meta.json").read_text())
+    assert meta["artifacts"] == ["best.pt"]
+    assert meta["sha256"]["best.pt"] == hashlib.sha256(payload).hexdigest()
+    # no leftover temp files from the atomic copy / write
+    assert not list(run_dir.glob(".best.pt.*.tmp"))
+    assert not list(run_dir.glob(".meta.json.*.tmp"))
+
+
 def test_missing_artifact_is_skipped_not_fatal(tmp_path: Path) -> None:
     run_dir = history.archive_run(
         "train",

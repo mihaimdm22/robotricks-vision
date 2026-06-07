@@ -24,8 +24,11 @@ a zero-dependency "what happened last night?" command.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -103,13 +106,17 @@ def archive_run(
         (run_dir / "run.log").write_text(log_text, encoding="utf-8")
 
     copied: list[str] = []
+    digests: dict[str, str] = {}
     for dest_name, src in (artifacts or {}).items():
         src_path = Path(src)
         if src_path.exists():
-            shutil.copyfile(src_path, run_dir / dest_name)
+            # WS-A6: atomic copy (temp + os.replace) so a crash mid-copy never leaves a
+            # half-written best.pt/report.md, and record a sha256 to detect corruption.
+            digests[dest_name] = _atomic_copy(src_path, run_dir / dest_name)
             copied.append(dest_name)
     if copied:
         meta["artifacts"] = copied
+        meta["sha256"] = digests
         _write_json(run_dir / "meta.json", meta)
 
     entry = {
@@ -195,8 +202,45 @@ def _fmt_secs(seconds: object) -> str:
     return f"{seconds / 60.0:.1f}m"
 
 
+def _sha256(path: Path) -> str:
+    """Streaming sha256 of a file (handles large best.pt without loading it whole)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _atomic_copy(src: Path, dst: Path) -> str:
+    """Copy src -> dst atomically (temp in the SAME dir + os.replace) so readers never
+    see a partial file after a crash. Returns the sha256 of the copied bytes (WS-A6)."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(dst.parent), prefix=f".{dst.name}.", suffix=".tmp")
+    os.close(fd)
+    tmp_path = Path(tmp)
+    try:
+        shutil.copyfile(src, tmp_path)
+        digest = _sha256(tmp_path)
+        os.replace(tmp_path, dst)  # atomic on the same filesystem (POSIX + Windows)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+    return digest
+
+
 def _write_json(path: Path, obj: dict[str, Any]) -> None:
-    path.write_text(json.dumps(obj, indent=2, default=str), encoding="utf-8")
+    """Write JSON atomically (temp + os.replace) so a crash never truncates meta.json."""
+    text = json.dumps(obj, indent=2, default=str)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        if Path(tmp).exists():
+            Path(tmp).unlink()
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:

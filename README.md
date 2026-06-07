@@ -11,6 +11,12 @@ Arduino robot to follow the cat at a safe distance.
 > run.** A Karpathy-style fine-tune is an optional, time-boxed stretch (see
 > [Training](#training)). Engineering rules in [`CLAUDE.md`](CLAUDE.md).
 
+> 📚 **Full documentation** — architecture deep-dives (with diagrams), API/config/CLI
+> reference, and a step-by-step install/link/test manual — lives in
+> **[`docs/README.md`](docs/README.md)**. New here? Start with the
+> [Architecture Overview](docs/architecture/overview.md) or the
+> [Install & Test Manual](docs/guides/install-and-test.md).
+
 ---
 
 ## What it does
@@ -117,6 +123,10 @@ firmware's 20 cm hard-stop underneath it all.
 
 The **Control** tab also carries **camera pan/tilt (PTZ)** on the video pane when a
 `tapo_c211` source is connected (the chassis turn is "Body yaw"; PTZ moves the camera).
+The live video draws **crisp distance/identity overlays + failure badges** on a canvas over
+the burned-in boxes (target ring, distance ± CI, bearing; debounced badges for
+low-confidence / out-of-range / depth-vs-geometry disagreement). The durable job queue
+(overnight sweeps + web eval/training) is observable at `GET /api/jobs` and `make jobs`.
 
 Config lives in `configs/web.yaml` (host, port, fps cap, watchdog, CORS origins, control
 token timeout, `train_config`, `ptz_min_interval_s`) and `configs/models.yaml` (the
@@ -202,7 +212,8 @@ baseline keeps running throughout and is always one `make promote-revert` away.
 Run the whole sweep + eval plan unattended, then wire in the winner in the morning:
 
 ```bash
-make overnight        # run configs/overnight.yaml unattended; archive every run to runs/history/
+make overnight        # run configs/overnight.yaml unattended; resumes if re-run after a crash
+make jobs             # the live durable queue (queued/running/ok/fail/timeout); also GET /api/jobs
 make history          # in the morning: print the run-history index (runs/history/INDEX.md)
 make promote          # wire the fine-tune winner into the pipeline (gated; asks first)
 make promote-revert   # one-command rollback to the pretrained baseline
@@ -210,10 +221,14 @@ make promote-revert   # one-command rollback to the pretrained baseline
 
 - **Plan** lives in [`configs/overnight.yaml`](configs/overnight.yaml): a list of `autoresearch` /
   `train` / `eval` jobs. Per-trial time budget and the training device (`mps`) live in
-  `configs/train.yaml`.
-- **Resilient by design**: each job runs in its own subprocess, so a torch segfault, an OOM,
-  or a missing dataset takes down only that job — never the whole night. If the cat dataset
-  isn't prepared, training jobs are *skipped* (logged) and the baseline evals still run.
+  `configs/train.yaml`. `job_timeout_min` / `max_attempts` tune the watchdog + retries.
+- **Crash-safe (durable queue).** The plan is a SQLite job queue (`runs/jobqueue.sqlite3`):
+  each job is crash-isolated in its own subprocess with a wall-clock **timeout** (kills the
+  whole process group, no orphaned dataloader workers), and **re-running resumes** — completed
+  jobs are skipped, a job left running by a crash (reboot / OOM / ssh-drop) is recovered, and
+  transient failures (OOM, timeout, transient I/O) **retry with backoff**. `--fresh` re-runs
+  the whole plan; if the cat dataset isn't prepared, training jobs are *skipped* and the
+  baseline evals still run.
 - **History** is on-disk under `runs/history/` (gitignored — local, but stores everything):
   one timestamped dir per run with `meta.json`, `params.json`, `metrics.json`, the captured
   `run.log`, and copied artifacts (`best.pt` / `report.md`), plus an append-only `index.jsonl`
@@ -221,6 +236,21 @@ make promote-revert   # one-command rollback to the pretrained baseline
 - **Promotion is gated** (the hard rule): `make promote` shows the winner + the keep/reject
   trial log and asks before editing `configs/cat_distance.yaml`; the baseline is always one
   `make promote-revert` away.
+
+### Measuring accuracy + extending
+
+- **Distance MAE, measured.** The provided stills ship no distance labels, so MAE is skipped
+  by default. Drop tape-measured / HC-SR04 distances into a GT sidecar (template:
+  [`configs/eval/how_far.gts.example.json`](configs/eval/how_far.gts.example.json)), then
+  `make eval GTS=data/eval/how_far.gts.json` prints a finite MAE.
+- **Keep/reject on the frozen metric.** `make keepreject BASELINE=base.json CANDIDATE=cand.json`
+  compares two `--metrics-json` eval runs and KEEPs a perception change only if it holds or
+  improves the frozen metric (FPS faithful; MAE faithful once GT'd; continuity/smoothness are
+  proxies). A scored-core change is gated, never eyeballed.
+- **Add a model / dataset / backend on top.** A model is one entry in `configs/models.yaml`
+  (visible to both the CLI `--model <id>` and the web Models tab); a dataset is one entry in
+  `configs/datasets.yaml` (`make prepare DATASET=<id>`); a detector backend is one builder in
+  `detect.py`. Copy-paste recipes in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 

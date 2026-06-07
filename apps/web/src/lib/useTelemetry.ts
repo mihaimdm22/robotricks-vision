@@ -17,6 +17,29 @@ import { wsURL } from "./api";
 import type { Mode } from "./api";
 import type { StopReason } from "./stopReasons";
 
+/** WS-B0 overlay contract: one detection, coords NORMALIZED to [0,1] of the frame. */
+export type OverlayDet = {
+  track_id: number | null;
+  cls: string;
+  xyxy_norm: [number, number, number, number];
+  conf: number;
+  dist_m: number | null;
+  dist_lo: number | null;
+  dist_hi: number | null;
+  bearing_deg: number;
+  is_target: boolean;
+  flags: string[];
+};
+
+/** WS-B0 per-frame overlay payload the console draws on a canvas over the MJPEG <img>. */
+export type Overlay = {
+  frame_id: number;
+  frame_w: number;
+  frame_h: number;
+  dets: OverlayDet[];
+  global_flags: string[];
+};
+
 export type Telemetry = {
   mode: Mode;
   stop_reason: StopReason;
@@ -43,6 +66,7 @@ export type Telemetry = {
   train_running: boolean;
   you_are_controller: boolean;
   controller_id: number | null;
+  overlay?: Overlay | null;
 };
 
 export type LinkState = "connecting" | "live" | "disconnected";

@@ -93,4 +93,30 @@ end-to-end; everything below is polish, hardware bring-up, or stretch.
 > cut because a public HTTPS console can't reach a LAN HTTP/no-auth robot backend.
 - [ ] **Hosted-console error taxonomy** — typed `mixed_content` + `cors_blocked` + cert-fail states (distinct from generic `unreachable`), and a `/healthz` reachability probe (must treat `204`/`res.ok` as success, not parse a body). **Priority:** P3. Only worth it if a hosted console becomes a real target.
 - [ ] **Public backend access (needs auth first)** — a TLS tunnel (Cloudflare Tunnel / Tailscale Funnel) to `catranger serve` would let a hosted console drive a robot, but CORS is **not** auth: today anyone with the public URL could drive. Gate behind real auth before exposing. **Priority:** P3 / blocked-on-auth.
-- [ ] **`apps/web` unit runner** — vitest+jsdom; first test = `API_BASE` resolution order (localStorage > env > default) + SSR `window`-guard. (Overlaps the smoke-test entry above.) **Priority:** P3.
+- [x] **`apps/web` unit runner** — vitest added (`make web-test`); covers `lib/letterbox.ts` + `lib/badges.ts`. **Completed:** 10x branch (2026-06-07). Follow-up: add jsdom + an `API_BASE` resolution test (localStorage > env > default) + SSR `window`-guard. **Priority:** P3.
+
+## CatRanger 10x follow-ups (`docs/02-CATRANGER-10X-PLAN.md`)
+> The 10x branch landed WS-A (failure recovery A1–A7), WS-D0 (GT plumbing + scored
+> keep/reject harness), WS-C (pluggable models/datasets), B0 overlay contract + B3
+> `/api/jobs` backend, D1 (config-gated), and B1/B2 console overlays (logic unit-tested,
+> render not yet eyeballed). What's left, grouped by what each NEEDS to proceed:
+
+### Needs `/run` (live server + console)
+- [ ] **Visually verify B1/B2 overlays** — start `catranger serve` + the Next console; confirm the target ring + distance label + failure badge land on the burned-in box across aspect ratios. The alignment math is unit-tested; the end-to-end render is not. **Priority:** P2.
+- [ ] **B3 live sweep/eval panel (UI)** — a console panel consuming `GET /api/jobs` to show overnight sweeps + web evals (queued→running→ok/fail/timeout) live, with empty/loading/reconnecting states. Backend + `make jobs` done; this is the React UI. **Priority:** P2.
+
+### Statically gateable (no app/ml needed)
+- [ ] **B2 accessibility** — mirror failure badges into an `aria-live` region (canvas text is invisible to screen readers); keyboard story for layer toggles; honor `prefers-reduced-motion`. **Priority:** P3.
+
+### Needs ml extra + ground-truth data (each gated by `make keepreject`)
+- [ ] **D0.1 — capture a distance GT set** — tape-measured / HC-SR04 distances for ~30–60 frames → `data/eval/how_far.gts.json` (template: `configs/eval/how_far.gts.example.json`). Unblocks distance MAE; `make eval GTS=…` then prints a finite MAE. **Priority:** P1 (enables all of WS-D). Needs: real measured frames.
+- [ ] **D1 — activate + tune the eroded-box median** — set `depth.box_erosion` and re-fit per-class `α`; keep only if `make keepreject` shows lower MAE vs the recorded baseline. **Priority:** P2. Needs: ml extra + D0.1.
+- [ ] **D2 — locked-target ReID** — single OSNet appearance template for the followed cat to survive full occlusion / second-cat intrusion. **Priority:** P2. Needs: ml + a labeled occlusion clip (D0.3).
+- [ ] **D3 — detector/edge** — add a `yolo26s` model profile (NMS-free, ~43% faster CPU); TensorRT-export detector + a ViT-Small depth backbone for the Go2 Orin NX. **Priority:** P2. Needs: ml (+ Jetson for TRT).
+- [ ] **D4 — command smoothness** — temporal filter on per-track Z before the controller, so the deadband→EMA→slew chain fights less. **Priority:** P3. Needs: ml + GT.
+- [ ] **D0.3 — de-proxy continuity/smoothness** — score track continuity against a hand-labeled occlusion clip (the existing `synthetic_occlusion_reacquire` hook) and pair the smoothness jerk metric with a tracking-lag term so harder damping can't win for free. **Priority:** P2. Needs: a labeled occlusion clip.
+
+### Review follow-ups (from `/review`; may already be handled by the in-flight WS-A7 heartbeat work)
+- [ ] **Collision-proof the web-eval `run_key`** — append a `uuid4` suffix in `runtime.start_eval`; `web-eval-<ms>` collides on a same-millisecond double-click, letting the busy-path settle mark the live eval "skipped". **Priority:** P3.
+- [ ] **Snapshot `EvalJob._on_settle` under the lock** — it's read after the lock releases, racing a concurrent `start()` (microsecond window). **Priority:** P3.
+- [ ] **Confirm the `recover_stale` / `complete_by_key` cross-owner contract** — now that the progress-heartbeat keeps a live web eval's lease fresh, decide whether the overnight runner should ever reclaim a `web`-owned row, or whether `fail_orphans('web')` is the sole recoverer of web evals. **Priority:** P3.

@@ -78,11 +78,20 @@ def _read_metric(results: Any, metric_key: str) -> float:
     return float("nan")
 
 
+def _resume_checkpoint(run_dir: Path) -> Path | None:
+    """The checkpoint to resume from in a run dir, or None (WS-A4). Resume restores the
+    optimizer + LR scheduler + epoch, which live in last.pt — NOT best.pt (that's the
+    best-fitness epoch, for scoring/publishing only). Requires >=1 completed epoch."""
+    last_pt = run_dir / "weights" / "last.pt"
+    return last_pt if last_pt.exists() else None
+
+
 def train_once(
     cfg: dict[str, Any],
     overrides: dict[str, Any] | None = None,
     name: str | None = None,
     epochs: int | None = None,
+    resume: str = "auto",
 ) -> dict[str, Any]:
     """Run one fine-tune and return {metric, metric_key, best_pt, name, args}.
 
@@ -90,6 +99,12 @@ def train_once(
     `overrides` are hyperparameter knobs merged on top of the base train args (the
     keep/reject loop sweeps these). `epochs`/`name` let the caller cap budget + isolate
     the run directory. ultralytics is imported here, lazily.
+
+    `resume` (WS-A4 crash recovery): "auto" resumes from <run_dir>/weights/last.pt when
+    it exists (so a retried/relaunched long fine-tune continues instead of restarting),
+    else trains fresh; "never" always trains fresh; "force" errors if there is no usable
+    checkpoint. A corrupt/half-written checkpoint falls back to a clean start (unless
+    "force") — exactly the crash artifact this exists to survive.
     """
     try:
         from ultralytics import YOLO  # lazy: only needed to actually train
@@ -140,12 +155,29 @@ def train_once(
     if overrides:
         print(f"[train] overrides: {overrides}")
 
-    model = YOLO(base_model)
-    results = model.train(**train_args)
-    metric = _read_metric(results, metric_key)
-
     run_dir = Path(train_args["project"]) / str(train_args["name"])
     best_pt = run_dir / "weights" / "best.pt"
+
+    # WS-A4: resume a crashed run from last.pt (restores optimizer/scheduler/epoch) when
+    # asked and available; fall back to a clean train on any resume failure unless forced.
+    last_pt = None if resume == "never" else _resume_checkpoint(run_dir)
+    results = None
+    if last_pt is not None:
+        try:
+            print(f"[train] resuming from {last_pt}")
+            results = YOLO(str(last_pt)).train(resume=True)
+        except Exception as exc:
+            if resume == "force":
+                raise SystemExit(f"[train] cannot resume from {last_pt}: {exc}") from exc
+            print(f"[train] resume failed ({exc!r}); restarting clean")
+            results = None
+    if results is None:
+        if resume == "force":
+            ckpt = run_dir / "weights" / "last.pt"
+            raise SystemExit(f"[train] --resume force but no usable checkpoint at {ckpt}")
+        results = YOLO(base_model).train(**train_args)
+
+    metric = _read_metric(results, metric_key)
 
     print(f"[train] FROZEN METRIC {metric_key} = {metric:.5f}")
     return {
@@ -177,13 +209,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", default="configs/train.yaml", help="path to train.yaml")
     ap.add_argument("--epochs", type=int, default=None, help="override config epochs")
     ap.add_argument("--name", default=None, help="override run name")
+    ap.add_argument(
+        "--resume",
+        default="auto",
+        choices=["auto", "never", "force"],
+        help="crash recovery (WS-A4): auto=resume from last.pt if present, never=always "
+        "fresh, force=require a checkpoint",
+    )
     ap.add_argument("--device", default=None, help="override device (cuda|mps|cpu|0)")
     args = ap.parse_args(argv)
 
     cfg = _load_config(args.config)
     if args.device:
         cfg["device"] = args.device  # let the web/CLI pick the box's real device
-    out = train_once(cfg, name=args.name, epochs=args.epochs)
+    out = train_once(cfg, name=args.name, epochs=args.epochs, resume=args.resume)
 
     # One number, printed alone, so a harness/grep can read it.
     print(f"{out['metric']:.5f}")

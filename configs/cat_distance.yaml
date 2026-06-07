@@ -26,6 +26,9 @@ depth:
   backend: depth_anything_v2_metric_indoor   # transformers; metric meters indoors
   # backend: unidepth_v2                      # alt: ingests K -> true metric + confidence
   every_n: 5                # run the depth net every Nth frame (protect FPS)
+  box_erosion: 0.0          # WS-D1: shrink each box this fraction before the in-box depth
+                            # median (0=off; ~0.2 cuts background bleed at box edges).
+                            # Activate only when `make keepreject` shows it lowers MAE.
 
 # Real-world size priors for monocular distance (meters). Cats vary a lot with
 # posture -> wide range + lean on the depth net. Generic objects included so the
