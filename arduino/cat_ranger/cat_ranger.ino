@@ -1,165 +1,316 @@
 /*
- * cat_ranger.ino  --  CatRanger chassis firmware (Arduino Mega 2560)
- * ---------------------------------------------------------------------------
- * Drives a 2-wheel-drive chassis, a camera pan servo, and reports HC-SR04
- * ultrasonic distance back to the host. The laptop does all the perception;
- * this sketch just actuates and reports ground-truth distance.
+ * cat_ranger.ino  --  CatRanger chassis firmware (Arduino MEGA + Adafruit Motor Shield v1)
+ * ===========================================================================
+ * THIS IS THE TESTED, ON-THE-RIG firmware. The drive/turn/sensor/LCD/RGB/buzzer
+ * logic below is exactly what the team flashed and verified on the physical robot.
+ * Do NOT rewrite it. Only SURGICAL, ADDITIVE changes were layered on top so the
+ * CatRanger laptop host can read ground-truth distance and drive the rig through its
+ * proven single-char command set (see catranger/hw/char_bridge.py):
  *
- * CONNECTIVITY -- WIRELESS (Bluetooth) or wired (USB)
- * --------------------------------------------------------------------------
- * The host (laptop running CatRanger) connects over BLUETOOTH. A transparent
- * UART Bluetooth module bridges the wireless link to the Mega's hardware serial,
- * so this firmware just talks to a Stream -- it does not care whether the bytes
- * arrive over USB, HC-05 (Bluetooth Classic / SPP) or HM-10 (BLE). Pick the link:
+ *   (1) D-telemetry: emit "D <cm>\n" on Serial1 on a millis() timer (~10 Hz) so the
+ *       host's read_distance_cm() gets the HC-SR04 ground truth (the "model 1.84 m
+ *       vs ultrasonic 1.86 m" stage moment). No-echo (999) is mapped to -1 to match
+ *       the host contract (serial_bridge.py treats -1 as "no reading").
+ *   (2) Quiet command link: status acks go to the USB Serial (debug) ONLY, never to
+ *       Serial1 (the Bluetooth command link), so they cannot fragment "D <cm>" lines.
+ *   (3) Boot into manual mode (mod='b') instead of idle, so the host's drive commands
+ *       work even if its bootstrap 'b' is dropped on the wireless link.
+ *   (4) Nothing else changed. inainte/inapoi/roteste*90/getDistanta, the AFMotor
+ *       M3/M4 mapping, the 30 cm autonomous obstacle stop, RGB/buzzer/LCD: untouched.
  *
- *     #define LINK      Serial1     // <-- Bluetooth module on Serial1 (default)
- *     #define LINK_BAUD 9600        // HC-05 / HM-10 factory baud (NOT 115200)
- *   ( for a wired USB cable instead:  #define LINK Serial  /  LINK_BAUD 115200 )
+ * WIRING (the REAL rig)
+ * ---------------------
+ *   Motors      : Adafruit Motor Shield v1 -> M3 = LEFT, M4 = RIGHT
+ *                 (if a turn comes out reversed, swap the 3 and 4 in AF_DCMotor below)
+ *   HC-SR04     : TRIG = A1, ECHO = A2
+ *   RGB LED     : R = 53, G = 51, B = 49  (common ANODE: LOW = on)
+ *   Buzzer      : pin 22 (fixed 2000 Hz)
+ *   LCD         : I2C 16x2 @ 0x27
+ *   Command link: Serial1 (TX1=D18, RX1=D19) -> HC-05 / HM-10 Bluetooth @ 9600 baud
  *
- * Wire the module to Serial1 (keeps USB free for flashing + Serial Monitor debug):
- *     module TXD  -> Mega RX1 (D19)
- *     module RXD  <- Mega TX1 (D18)  THROUGH a divider  (Mega TX is 5V; module RX
- *                                    wants ~3.3V: e.g. 1k in series + 2k to GND)
- *     module VCC  -> 5V        module GND -> GND
- *   HC-05 (Classic/SPP): host sees a serial port (/dev/cu.HC-05..., /dev/rfcomm0)
- *                        -> CatRanger `--connection bt --hw-port <that port>`.
- *   HM-10 (BLE)        : host talks GATT -> CatRanger `--connection ble --ble <addr>`.
- *   Both are transparent UART, so THIS SKETCH IS THE SAME for either module.
- *
- * SERIAL PROTOCOL (must match catranger/hw/serial_bridge.py exactly)
- * ------------------------------------------------------------------
- *   IN  (host -> Arduino):  "C <dx> <dy> <rot> <pan>\n"   (4 ints)
- *        dx   : lateral strafe   [-255..255]  (2WD chassis ignores this; see note)
- *        dy   : FORWARD drive     [-255..255]  (+ = forward / approach)
- *        rot  : yaw / turn        [-255..255]  (+ = turn right / clockwise)
- *        pan  : camera servo angle [0..180]    (90 = centered)
- *   OUT (Arduino -> host):  "D <cm>\n"  at ~20 Hz   (-1 = no echo / out of range)
- *
- * Differential mix:  left = dy + rot,  right = dy - rot   (then clamped to PWM).
- *   pure dy  -> both wheels forward      (drive straight)
- *   pure rot -> wheels oppose            (turn in place)
- * A 2WD differential chassis cannot strafe, so `dx` is parsed but unused here.
- *
- * WIRING / PIN MAP  (direct H-bridge control -- NO motor-shield library needed)
- * ----------------------------------------------------------------------------
- *   LEFT  motor : IN1 = D22, IN2 = D23, ENA(PWM) = D2
- *   RIGHT motor : IN3 = D24, IN4 = D25, ENB(PWM) = D3
- *   CAMERA servo: signal = D9   (servo +5V to a dedicated 5V rail, GND common)
- *   HC-SR04     : TRIG = D30,  ECHO = D31
- *   BT module   : on Serial1 (TX1=D18, RX1=D19) -- see CONNECTIVITY above
- *
- *   Power: motors from a SEPARATE battery pack into the H-bridge Vmotor; tie all
- *   GNDs together. Do NOT run motors off the Arduino 5V regulator. HC-SR04 ECHO is
- *   5V -- safe on a 5V Mega input pin directly.
- *
- * SAFE-DISTANCE NOTE
- * ------------------
- * If the measured distance is below SAFE_STOP_CM (and valid), the chassis is forced
- * to STOP regardless of the incoming forward command -- last line of defense so the
- * robot never rams the cat / a wall. The host follower should back off too.
- *
- * If you have a classic Adafruit Motor Shield v1, swap the H-bridge calls in
- * driveMotors() for AFMotor. The protocol and the rest stay identical.
+ * SINGLE-CHAR PROTOCOL (host -> Arduino, on Serial1)
+ * -------------------------------------------------
+ *   'a' = autonomous mode (drive forward, auto-stop at 30 cm obstacle)  [STANDALONE
+ *         demo only -- it is bearing-blind and will NOT follow a cat; the host must
+ *         not use it for follow, see char_bridge.py]
+ *   'b' = manual mode / stop
+ *   'f' = nudge forward ~400 ms then auto-stop      (manual mode)
+ *   'g' = nudge back    ~400 ms then auto-stop      (manual mode)
+ *   'h' = turn left  ~90 deg                         (manual mode / obstacle unblock)
+ *   'j' = turn right ~90 deg                         (manual mode / obstacle unblock)
+ * Arduino -> host (on Serial1):  "D <cm>\n" at ~10 Hz   (-1 = no echo / out of range)
  */
 
-#include <Servo.h>
+#include <AFMotor.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
-// ---- link selection (Bluetooth by default; see CONNECTIVITY) --------------
-#define LINK       Serial1   // Bluetooth module on Serial1; use `Serial` for USB
-#define LINK_BAUD  9600      // HC-05 / HM-10 factory baud (use 115200 for USB)
-#define DEBUG_USB  0         // 1 = also mirror "D <cm>" to the USB Serial Monitor
+// Motoare pe M3 si M4 (daca rotirile ies inversate, schimba 3 cu 4)
+AF_DCMotor motorStanga(3);
+AF_DCMotor motorDreapta(4);
 
-// ---- pin map -------------------------------------------------------------
-const int L_IN1 = 22, L_IN2 = 23, L_EN = 2;   // left motor  (EN must be PWM)
-const int R_IN3 = 24, R_IN4 = 25, R_EN = 3;   // right motor (EN must be PWM)
-const int SERVO_PIN = 9;                       // camera pan servo
-const int TRIG = 30, ECHO = 31;                // HC-SR04
+// RGB (common anode: LOW = aprins)
+#define RED 53
+#define GREEN 51
+#define BLUE 49
 
-// ---- tuning --------------------------------------------------------------
-const int  PWM_MAX        = 255;   // analogWrite ceiling
-const int  SAFE_STOP_CM   = 20;    // hard stop if a valid reading is closer
-const unsigned long PING_PERIOD_MS = 50;       // ~20 Hz distance reports
-const unsigned long ECHO_TIMEOUT_US = 30000;   // ~5 m round trip
+// Buzzer
+#define BUZZER 22
+#define FRECV_BIP 2000         // frecventa fixa a bipului
 
-Servo pan;
-int   lastPan = 90;     // remembered servo angle (centered until told otherwise)
-long  lastCM  = -1;     // most recent ultrasonic reading (cm), -1 = invalid
+// Senzor ultrasunete
+#define TRIG A1
+#define ECHO A2
 
-// Read the HC-SR04. Returns distance in cm, or -1 on no echo / timeout.
-long readCM() {
-  digitalWrite(TRIG, LOW);  delayMicroseconds(2);
-  digitalWrite(TRIG, HIGH); delayMicroseconds(10);
+// LCD
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Parametri ajustabili
+#define VITEZA_NORMALA 100     // viteza fixa
+#define VITEZA_ROTIRE  150     // viteza la rotiri
+#define PRAG_OBSTACOL  30      // cm - cand se opreste
+#define TIMP_ROTIRE_90 250     // ms - calibreaza pentru 90 grade
+#define TIMP_MERS_SCURT 400    // ms - "putin inainte/inapoi"
+#define LCD_INTERVAL   250     // ms - update LCD de 4 ori/sec
+#define D_INTERVAL     100     // ms - emit "D <cm>" to the host ~10x/sec  (ADDITIVE)
+
+char mod = 0; // 0=idle, 'a'=autonom, 'b'=manual
+bool blocatDeObstacol = false;
+
+// Timing non-blocking
+unsigned long ultimaActualizareLCD = 0;
+unsigned long ultimulBip = 0;
+unsigned long ultimaTelemetrie = 0;    // ADDITIVE: last "D <cm>" emit
+long distantaCurenta = 999;
+
+// ---------- FUNCTII RGB ----------
+void setRGB(bool r, bool g, bool b) {
+  digitalWrite(RED, r ? LOW : HIGH);
+  digitalWrite(GREEN, g ? LOW : HIGH);
+  digitalWrite(BLUE, b ? LOW : HIGH);
+}
+
+// ---------- SENZOR ----------
+long getDistanta() {
   digitalWrite(TRIG, LOW);
-  long us = pulseIn(ECHO, HIGH, ECHO_TIMEOUT_US);
-  if (us == 0) return -1;          // no echo within timeout
-  return us / 58;                  // microseconds -> centimeters
+  delayMicroseconds(2);
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG, LOW);
+  long durata = pulseIn(ECHO, HIGH, 30000); // timeout 30ms
+  if (durata == 0) return 999; // nimic detectat
+  return durata * 0.034 / 2;
 }
 
-// Drive one motor from a signed speed (-PWM_MAX..PWM_MAX).
-void setMotor(int in_a, int in_b, int en, int speed) {
-  bool fwd = speed >= 0;
-  int  mag = abs(speed);
-  if (mag > PWM_MAX) mag = PWM_MAX;
-  digitalWrite(in_a, fwd ? HIGH : LOW);
-  digitalWrite(in_b, fwd ? LOW  : HIGH);
-  analogWrite(en, mag);
-}
-
-// Differential mix of forward(dy) + turn(rot) into the two wheels.
-// dx is accepted for protocol symmetry but unused on a 2WD chassis.
-void driveMotors(int dx, int dy, int rot) {
-  (void)dx;                        // no strafe on differential drive
-  int left  = dy + rot;
-  int right = dy - rot;
-  // Safety: a valid, too-close reading forces a full stop.
-  if (lastCM >= 0 && lastCM < SAFE_STOP_CM) {
-    left = 0;
-    right = 0;
+// ---------- TELEMETRIE host (ADDITIVE) ----------
+// Emit "D <cm>\n" on the Bluetooth command link for the laptop host. Maps the
+// 999 "no echo" sentinel to -1 so it matches catranger/hw/serial_bridge.py.
+// Refreshes the reading itself, on the timer, only when NOT in autonomous mode
+// (autonomous already pings every loop). This keeps manual/idle mode from blocking
+// the command loop on pulseIn() more than ~10x/sec.
+void trimiteTelemetrie() {
+  if (millis() - ultimaTelemetrie >= D_INTERVAL) {
+    ultimaTelemetrie = millis();
+    if (mod != 'a') distantaCurenta = getDistanta();
+    long out = (distantaCurenta >= 999) ? -1 : distantaCurenta;
+    Serial1.print("D ");
+    Serial1.println(out);
   }
-  setMotor(L_IN1, L_IN2, L_EN, left);
-  setMotor(R_IN3, R_IN4, R_EN, right);
 }
 
-void stopMotors() {
-  analogWrite(L_EN, 0);
-  analogWrite(R_EN, 0);
+// ---------- MOTOARE ----------
+void inainte(int viteza) {
+  motorStanga.setSpeed(viteza);
+  motorDreapta.setSpeed(viteza);
+  motorStanga.run(FORWARD);
+  motorDreapta.run(FORWARD);
+}
+
+void inapoi(int viteza) {
+  motorStanga.setSpeed(viteza);
+  motorDreapta.setSpeed(viteza);
+  motorStanga.run(BACKWARD);
+  motorDreapta.run(BACKWARD);
+}
+
+void stopMotoare() {
+  motorStanga.run(RELEASE);
+  motorDreapta.run(RELEASE);
+}
+
+void rotesteStanga90() {
+  motorStanga.setSpeed(VITEZA_ROTIRE);
+  motorDreapta.setSpeed(VITEZA_ROTIRE);
+  motorStanga.run(BACKWARD);
+  motorDreapta.run(FORWARD);
+  delay(TIMP_ROTIRE_90);
+  stopMotoare();
+}
+
+void rotesteDreapta90() {
+  motorStanga.setSpeed(VITEZA_ROTIRE);
+  motorDreapta.setSpeed(VITEZA_ROTIRE);
+  motorStanga.run(FORWARD);
+  motorDreapta.run(BACKWARD);
+  delay(TIMP_ROTIRE_90);
+  stopMotoare();
+}
+
+// ---------- RGB pe 5 intervale ----------
+void culoareDistanta(long d) {
+  if (d <= 30) {
+    setRGB(1, 0, 0);        // rosu - foarte aproape
+  } else if (d <= 60) {
+    setRGB(1, 1, 0);        // galben
+  } else if (d <= 90) {
+    setRGB(0, 1, 0);        // verde
+  } else if (d <= 120) {
+    setRGB(0, 1, 1);        // cyan
+  } else {
+    setRGB(0, 0, 1);        // albastru - departe
+  }
+}
+
+// ---------- BUZZER tip detector de metale ----------
+void bipDetector(long d) {
+  if (d > 60) {
+    noTone(BUZZER);
+    return;
+  }
+  int interval = map(constrain(d, PRAG_OBSTACOL, 60), 60, PRAG_OBSTACOL, 1000, 80);
+
+  if (millis() - ultimulBip >= (unsigned long)interval) {
+    ultimulBip = millis();
+    tone(BUZZER, FRECV_BIP, 50);
+  }
+}
+
+// ---------- LCD update throttled ----------
+void actualizeazaLCD(long d) {
+  if (millis() - ultimaActualizareLCD >= LCD_INTERVAL) {
+    ultimaActualizareLCD = millis();
+    lcd.setCursor(0, 0);
+    if (blocatDeObstacol) {
+      lcd.print("OBSTACOL! h/j   ");
+    } else {
+      lcd.print("Distanta:       ");
+    }
+    lcd.setCursor(0, 1);
+    lcd.print(d);
+    lcd.print(" cm        ");
+  }
+}
+
+// ---------- MOD AUTONOM ----------
+void ruleazaAutonom() {
+  distantaCurenta = getDistanta();
+
+  culoareDistanta(distantaCurenta);
+  bipDetector(distantaCurenta);
+  actualizeazaLCD(distantaCurenta);
+
+  if (distantaCurenta <= PRAG_OBSTACOL) {
+    blocatDeObstacol = true;
+    stopMotoare();
+  } else {
+    blocatDeObstacol = false;
+    inainte(VITEZA_NORMALA);
+  }
 }
 
 void setup() {
-  LINK.begin(LINK_BAUD);          // the Bluetooth (or USB) command link
-#if DEBUG_USB
-  if (&LINK != &Serial) Serial.begin(115200);
-#endif
-  pinMode(L_IN1, OUTPUT); pinMode(L_IN2, OUTPUT); pinMode(L_EN, OUTPUT);
-  pinMode(R_IN3, OUTPUT); pinMode(R_IN4, OUTPUT); pinMode(R_EN, OUTPUT);
-  pinMode(TRIG, OUTPUT);  pinMode(ECHO, INPUT);
-  pan.attach(SERVO_PIN);
-  pan.write(lastPan);     // center the camera
-  stopMotors();
+  Serial.begin(9600);
+  Serial1.begin(9600);
+
+  stopMotoare();
+
+  pinMode(RED, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+  pinMode(BLUE, OUTPUT);
+  setRGB(0, 0, 0);
+
+  pinMode(BUZZER, OUTPUT);
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Gata");
+
+  // ADDITIVE: boot straight into manual mode so the host's single-char drive commands
+  // (f/g/h/j) are honoured immediately. If CharBridge's bootstrap 'b' is ever dropped
+  // on the 9600 Bluetooth link, the rig still starts in the mode the host assumes,
+  // instead of being stuck in idle (mod=0) silently ignoring every move command.
+  mod = 'b';
 }
 
 void loop() {
-  // ---- IN: parse "C dx dy rot pan" -------------------------------------
-  if (LINK.available()) {
-    String s = LINK.readStringUntil('\n');
-    int dx, dy, rot, p;
-    if (sscanf(s.c_str(), "C %d %d %d %d", &dx, &dy, &rot, &p) == 4) {
-      lastPan = constrain(p, 0, 180);
-      pan.write(lastPan);
-      driveMotors(dx, dy, rot);
+  if (Serial1.available()) {
+    char c = Serial1.read();
+    Serial.print("Comanda: ");      // USB debug only
+    Serial.println(c);
+
+    switch (c) {
+      case 'a': // PORNESTE MOD AUTONOM
+        mod = 'a';
+        blocatDeObstacol = false;
+        Serial.println("Mod autonom PORNIT");   // ADDITIVE: ack on USB, not Serial1
+        break;
+
+      case 'b': // MOD MANUAL
+        mod = 'b';
+        blocatDeObstacol = false;
+        stopMotoare();
+        noTone(BUZZER);
+        setRGB(0, 0, 0);
+        lcd.clear();
+        lcd.print("Mod manual");
+        Serial.println("Mod manual");           // ADDITIVE: ack on USB, not Serial1
+        break;
+
+      case 'f': // putin inainte
+        if (mod == 'b') {
+          inainte(VITEZA_NORMALA);
+          delay(TIMP_MERS_SCURT);
+          stopMotoare();
+          Serial.println("Inainte");            // ADDITIVE: ack on USB, not Serial1
+        }
+        break;
+
+      case 'g': // putin inapoi
+        if (mod == 'b') {
+          inapoi(VITEZA_NORMALA);
+          delay(TIMP_MERS_SCURT);
+          stopMotoare();
+          Serial.println("Inapoi");             // ADDITIVE: ack on USB, not Serial1
+        }
+        break;
+
+      case 'h': // stanga 90 (manual SAU deblocare obstacol in autonom)
+        if (mod == 'b' || (mod == 'a' && blocatDeObstacol)) {
+          rotesteStanga90();
+          blocatDeObstacol = false;
+          Serial.println("Stanga 90");          // ADDITIVE: ack on USB, not Serial1
+        }
+        break;
+
+      case 'j': // dreapta 90 (manual SAU deblocare obstacol in autonom)
+        if (mod == 'b' || (mod == 'a' && blocatDeObstacol)) {
+          rotesteDreapta90();
+          blocatDeObstacol = false;
+          Serial.println("Dreapta 90");         // ADDITIVE: ack on USB, not Serial1
+        }
+        break;
     }
   }
 
-  // ---- OUT: "D <cm>" at ~20 Hz -----------------------------------------
-  static unsigned long t = 0;
-  unsigned long now = millis();
-  if (now - t >= PING_PERIOD_MS) {
-    t = now;
-    lastCM = readCM();            // update for both reporting and the safety stop
-    LINK.print("D ");
-    LINK.println(lastCM);
-#if DEBUG_USB
-    if (&LINK != &Serial) { Serial.print("D "); Serial.println(lastCM); }
-#endif
+  if (mod == 'a') {
+    ruleazaAutonom();
   }
+
+  // ADDITIVE: stream ground-truth distance to the host (~10 Hz). In manual/idle this
+  // also refreshes the reading on the timer, so the loop never blocks on pulseIn()
+  // more than once per D_INTERVAL.
+  trimiteTelemetrie();
 }

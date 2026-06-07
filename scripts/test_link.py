@@ -32,7 +32,12 @@ from catranger.types import Command  # noqa: E402
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="CatRanger robot-link bench test")
-    ap.add_argument("--connection", default="auto", choices=["auto", "usb", "bt", "ble", "dummy"])
+    ap.add_argument(
+        "--connection",
+        default="auto",
+        choices=["auto", "usb", "bt", "ble", "char", "dummy"],
+        help="'char' = the tested single-char firmware (Adafruit shield rig)",
+    )
     ap.add_argument("--hw-port", default=None, help="serial / Bluetooth-SPP port")
     ap.add_argument("--ble", default=None, help="BLE address (HM-10)")
     ap.add_argument("--baud", type=int, default=9600, help="serial baud (HC-05 SPP = 9600)")
