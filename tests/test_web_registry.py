@@ -249,3 +249,13 @@ def test_baseline_and_zero_class_finetune_do_not_warn(tmp_path: Path, recwarn) -
     )
     ModelRegistry.from_yaml(_write(tmp_path, y))
     assert not [w for w in recwarn.list if "class 0" in str(w.message)]
+
+
+def test_to_public_dict_exposes_run_metadata_not_weights() -> None:
+    shipped = Path(__file__).resolve().parent.parent / "configs" / "models.yaml"
+    profile = ModelRegistry.from_yaml(shipped).get("yolo11m")
+    pub = profile.to_public_dict()
+    assert pub["run_kind"] == "autoresearch"
+    assert pub["metric"] == 0.515
+    assert "weights" not in pub
+    assert "classes" not in pub

@@ -96,20 +96,39 @@ def promote_weights(
     name: str = "Fine-tuned cats",
     classes: list[int] | None = None,
     dataset: str = "fine-tuned",
+    run_kind: str = "train",
+    trained_at: str = "",
+    metric: float | None = None,
+    metric_key: str | None = None,
+    duration_s: float | None = None,
+    summary: str = "",
+    notes: str = "promoted fine-tune",
 ) -> dict[str, Any]:
     """Wire `weights` into BOTH consumers: the CLI pipeline (cat_distance.yaml) and
     the web Models registry (models.yaml). Returns a summary dict. Caller validates
     the weights file exists first."""
     changed_cli = set_finetuned_weights(weights)
-    upsert_model_profile(
-        {
-            "id": model_id,
-            "name": name,
-            "backend": "yolo",
-            "weights": weights,
-            "classes": classes if classes is not None else [0],
-            "dataset": dataset,
-            "notes": "promoted fine-tune",
-        }
-    )
+    profile: dict[str, Any] = {
+        "id": model_id,
+        "name": name,
+        "backend": "yolo",
+        "weights": weights,
+        "classes": classes if classes is not None else [0],
+        "dataset": dataset,
+        "source": "fine-tuned",
+        "run_kind": run_kind,
+        "status": "ok",
+        "notes": notes,
+    }
+    if trained_at:
+        profile["trained_at"] = trained_at
+    if metric is not None:
+        profile["metric"] = metric
+    if metric_key:
+        profile["metric_key"] = metric_key
+    if duration_s is not None:
+        profile["duration_s"] = duration_s
+    if summary:
+        profile["summary"] = summary
+    upsert_model_profile(profile)
     return {"weights": weights, "model_id": model_id, "cli_changed": changed_cli}

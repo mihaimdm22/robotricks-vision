@@ -26,8 +26,38 @@ class FakeRuntime:
         self.started = False
         self.stopped = False
         self._models = [
-            {"id": "yolo11s", "name": "YOLO11s", "backend": "yolo", "dataset": "COCO"},
-            {"id": "rtdetr-l", "name": "RT-DETR-L", "backend": "rtdetr", "dataset": "COCO"},
+            {
+                "id": "yolo11s",
+                "name": "YOLO11s",
+                "backend": "yolo",
+                "dataset": "COCO",
+                "run_kind": "bootstrap",
+                "summary": "baseline",
+            },
+            {
+                "id": "yolo11m",
+                "name": "YOLO11m",
+                "backend": "yolo",
+                "dataset": "COCO",
+                "run_kind": "autoresearch",
+                "summary": "winner",
+            },
+            {
+                "id": "yolo11l",
+                "name": "YOLO11l",
+                "backend": "yolo",
+                "dataset": "COCO",
+                "run_kind": "train",
+                "summary": "recall",
+            },
+            {
+                "id": "rtdetr-l",
+                "name": "RT-DETR-L",
+                "backend": "rtdetr",
+                "dataset": "COCO",
+                "run_kind": "autoresearch",
+                "summary": "transformer",
+            },
         ]
         self.camera = "synthetic"
         self.robot = "dummy"
@@ -238,7 +268,7 @@ def test_status_returns_the_state_snapshot(client_and_runtime) -> None:
     body = client.get("/api/status").json()
     assert body["mode"] == "IDLE"
     assert body["model"] == "yolo11s"
-    assert len(body["models"]) == 2
+    assert len(body["models"]) == 4
 
 
 def test_control_applies_a_manual_intent(client_and_runtime) -> None:
@@ -282,7 +312,17 @@ def test_models_list(client_and_runtime) -> None:
     client, _ = client_and_runtime
     body = client.get("/api/models").json()
     assert body["active"] == "yolo11s"
-    assert {m["id"] for m in body["models"]} == {"yolo11s", "rtdetr-l"}
+    assert body["ok"] is True
+    assert {m["id"] for m in body["models"]} == {
+        "yolo11s",
+        "yolo11m",
+        "yolo11l",
+        "rtdetr-l",
+    }
+    yolo11m = next(m for m in body["models"] if m["id"] == "yolo11m")
+    assert yolo11m["run_kind"] == "autoresearch"
+    assert yolo11m["summary"]
+    assert "weights" not in yolo11m
 
 
 def test_select_known_model(client_and_runtime) -> None:

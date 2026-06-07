@@ -24,10 +24,17 @@ from typing import Protocol
 
 import numpy as np
 
+from catranger.io import is_stream
+
 try:
     import cv2
 except Exception:  # pragma: no cover - cv2 is a base dep but stay defensive
     cv2 = None  # type: ignore[assignment]
+
+# Tapo RTSP routinely needs several seconds to negotiate; the old 1 s probe
+# falsely fell back to synthetic while the grabber was still connecting.
+_NETWORK_CONNECT_WAIT_S = 15.0
+_LOCAL_CONNECT_WAIT_S = 2.0
 
 
 class FrameSource(Protocol):
@@ -96,10 +103,8 @@ class CameraSource:
         self.width = int(width)
         self.height = int(height)
         self._backoff = float(reconnect_backoff_s)
-        self._is_file = not self.spec.isdigit() and "://" not in self.spec
-        # RTSP over TCP is far more robust than the default UDP on a busy LAN.
-        if self.spec.lower().startswith("rtsp://"):
-            os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+        self._is_file = not self.spec.isdigit() and not is_stream(self.spec)
+        self._is_network = is_stream(self.spec)
 
         self._latest: np.ndarray | None = None
         self._lock = threading.Lock()
@@ -117,9 +122,14 @@ class CameraSource:
         return self._connected
 
     def _open(self) -> cv2.VideoCapture | None:
-        cap = (
-            cv2.VideoCapture(int(self.spec)) if self.spec.isdigit() else cv2.VideoCapture(self.spec)
-        )
+        if self.spec.isdigit():
+            cap = cv2.VideoCapture(int(self.spec))
+        elif self._is_network:
+            # Match the Tapo/FFmpeg recipe: explicit FFmpeg backend + TCP transport.
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+            cap = cv2.VideoCapture(self.spec, cv2.CAP_FFMPEG)
+        else:
+            cap = cv2.VideoCapture(self.spec)
         return cap if cap.isOpened() else None
 
     def _grab_loop(self) -> None:
@@ -171,12 +181,14 @@ def open_source(
         cam = CameraSource(spec, width=width, height=height)
     except Exception:
         return SyntheticSource(width, height)
-    # give the grabber a brief moment to land a first frame; else fall back
-    for _ in range(20):
-        if cam.read() is not None:
+    # Give the grabber time to connect. RTSP (especially Tapo) can take many
+    # seconds before the first frame; falling back too early looked like "RTSP
+    # refused" even when credentials and TCP transport were fine.
+    wait_s = _NETWORK_CONNECT_WAIT_S if is_stream(spec) else _LOCAL_CONNECT_WAIT_S
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        if cam.read() is not None or cam.connected:
             return cam
-        time.sleep(0.05)
-    if cam.connected:
-        return cam  # connected but slow first frame — keep it
+        time.sleep(0.1)
     cam.close()
     return SyntheticSource(width, height)
