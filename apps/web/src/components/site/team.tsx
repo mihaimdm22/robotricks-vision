@@ -48,7 +48,6 @@ export function Team() {
                   hasPhoto={hasPhoto(m.slug)}
                 />
                 <h3 className="mt-5 text-lg font-semibold">{m.name}</h3>
-                <p className="mt-1 text-sm leading-relaxed text-muted">{m.role}</p>
                 <Link
                   href={m.link}
                   target="_blank"

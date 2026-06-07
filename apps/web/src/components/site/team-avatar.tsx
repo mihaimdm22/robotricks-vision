@@ -23,7 +23,7 @@ export function TeamAvatar({
   const [failed, setFailed] = useState(false);
 
   return (
-    <span className="relative inline-flex size-20 items-center justify-center overflow-hidden rounded-2xl border border-line bg-white/[0.03]">
+    <span className="relative inline-flex size-20 items-center justify-center overflow-hidden rounded-full border border-line bg-white/[0.03]">
       <span
         aria-hidden
         className="absolute inset-0 bg-gradient-to-br from-orange/25 to-purple/25"
