@@ -5,6 +5,7 @@ import { Capabilities } from "@/components/site/capabilities";
 import { HowItWorks } from "@/components/site/how-it-works";
 import { Architecture } from "@/components/site/architecture";
 import { Metrics } from "@/components/site/metrics";
+import { Training } from "@/components/site/training";
 import { HardwareStrip } from "@/components/site/hardware-strip";
 import { Team } from "@/components/site/team";
 import { Docs } from "@/components/site/docs";
@@ -28,6 +29,7 @@ export default function Home() {
         <HowItWorks />
         <Architecture />
         <Metrics />
+        <Training />
         <HardwareStrip />
         <Team />
         <Docs />

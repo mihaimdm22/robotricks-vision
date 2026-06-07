@@ -2,6 +2,35 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.8.0] - 2026-06-07
+
+Make the project legible in one read. The GitHub README is rebuilt to industry standard —
+a hero banner, status badges, a table of contents, Mermaid diagrams, and embedded
+screenshots — and both the README and the landing page now lead with the **two Monsson
+challenges** CatRanger implements and adapts (*How Far?* + *Cat Tracker*), with the focus
+on the computer-vision and training stories. The scored perception core is untouched.
+
+### Added
+- **README, rebuilt** — a hero banner, truthful badges (CI, Python, uv, ruff, mypy,
+  Next.js), a table of contents, and a "Two Monsson challenges, one system" section that
+  links both challenge briefs and maps each judging criterion to how CatRanger addresses
+  it. Three Mermaid diagrams (end-to-end pipeline, distance fusion, the training
+  keep/reject loop) and five embedded screenshots under `docs/assets/`.
+- **Landing — a Training & Models section** (`apps/web`): the training story made visible —
+  baseline-always-runs, fine-tune (not from scratch), keep-only-if-the-frozen-metric-moves,
+  the six-stage fine-tune loop, and a pluggable models/datasets card.
+- **Landing — challenge attribution**: a footer "Challenges" column and credit line linking
+  the *How Far?* and *Cat Tracker* briefs, framed as implemented and adapted by the team.
+- **Team headshots** for the four-person crew (`apps/web/public/team/`).
+
+### Changed
+- **Landing, mobile-hardened** — the nav collapses to a hamburger through tablet (so the
+  added "Training" link never crowds the bar), an explicit `width=device-width` viewport,
+  and a no-horizontal-overflow layout verified at 390 px.
+- **Rares Ilasoaia's role** is now "Robotics mechanics champion".
+- **Team avatars** render via `next/image` `fill` (clears an aspect-ratio console warning).
+- **`apps/web/README.md`** opens with the two-challenge context and links the briefs.
+
 ## [0.7.0] - 2026-06-07
 
 Integrate the team's **tested, on-the-rig** Arduino firmware (Adafruit Motor Shield,
