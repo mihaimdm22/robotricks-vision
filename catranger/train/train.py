@@ -177,9 +177,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", default="configs/train.yaml", help="path to train.yaml")
     ap.add_argument("--epochs", type=int, default=None, help="override config epochs")
     ap.add_argument("--name", default=None, help="override run name")
+    ap.add_argument("--device", default=None, help="override device (cuda|mps|cpu|0)")
     args = ap.parse_args(argv)
 
     cfg = _load_config(args.config)
+    if args.device:
+        cfg["device"] = args.device  # let the web/CLI pick the box's real device
     out = train_once(cfg, name=args.name, epochs=args.epochs)
 
     # One number, printed alone, so a harness/grep can read it.

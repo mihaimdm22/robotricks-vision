@@ -47,6 +47,7 @@ class ModelSelect(BaseModel):
 
 class CameraConnect(BaseModel):
     spec: str  # "synthetic" | webcam index | rtsp url | file path
+    camera: str | None = None  # intrinsics profile: go2_1080p | tapo_c211 (re-anchors distance)
 
 
 class RobotConnect(BaseModel):
@@ -55,12 +56,36 @@ class RobotConnect(BaseModel):
     baud: int = 115200
 
 
+class PtzMove(BaseModel):
+    pan: float = 0.0  # [-1,1], + = right
+    tilt: float = 0.0  # [-1,1], + = up
+
+
+class PtzPreset(BaseModel):
+    name: str
+
+
 class EvalRun(BaseModel):
     source: str  # image dir | image | video | rtsp url (NOT a webcam index)
     approach: str = "A"  # A=YOLO11, B=RT-DETR
     classes: str | None = None  # 'all' | comma-sep COCO ids
     max_frames: int = 0  # 0 = all
     use_depth: bool = False  # off by default: faster on a CPU demo box
+
+
+class TrainRun(BaseModel):
+    kind: str  # prepare | train | autoresearch
+    config: str | None = None
+    epochs: int | None = None
+    device: str | None = None  # cuda | mps | cpu | 0
+    source: str | None = None  # dataset source override for 'prepare'
+
+
+class PromoteModel(BaseModel):
+    weights: str | None = None  # explicit path; else resolved from run_dir/winner
+    run_dir: str | None = None  # a runs/history/<dir> to promote its archived best.pt
+    model_id: str | None = None
+    name: str | None = None
 
 
 def _err(code: str, problem: str, cause: str, fix: str, status: int = 400) -> JSONResponse:
@@ -139,8 +164,17 @@ def create_app(runtime: Any) -> FastAPI:
 
     @app.post("/api/mode")
     def mode(intent: ModeIntent) -> dict:
+        target = intent.mode.upper()
+        # T1: a training run owns the GPU — refuse a drive switch (no silent kill).
+        if target in ("MANUAL", "FOLLOW") and getattr(runtime, "training_active", False):
+            return _err(
+                "train_active",
+                "stop training before driving",
+                "a training run is using the GPU; driving now would starve both",
+                "cancel the training job in the CV tab, then switch to MANUAL/FOLLOW",
+                status=409,
+            )
         try:
-            target = intent.mode.upper()
             ok = runtime.set_mode(target)
         except ValueError:
             return _err(
@@ -189,11 +223,26 @@ def create_app(runtime: Any) -> FastAPI:
 
     @app.post("/api/camera/connect")
     def camera_connect(req: CameraConnect) -> dict:
-        return runtime.connect_camera(req.spec)
+        return runtime.connect_camera(req.spec, camera=req.camera)
 
     @app.post("/api/camera/disconnect")
     def camera_disconnect() -> dict:
         return runtime.connect_camera("synthetic")
+
+    @app.post("/api/camera/ptz")
+    async def camera_ptz(req: PtzMove) -> JSONResponse:
+        # pytapo move() is a blocking network call — keep it off the event loop.
+        res = await run_in_threadpool(runtime.ptz_move, req.pan, req.tilt)
+        if not res.get("ok"):
+            return JSONResponse(res, status_code=int(res.pop("status", 400)))
+        return JSONResponse(res)
+
+    @app.post("/api/camera/ptz/preset")
+    async def camera_ptz_preset(req: PtzPreset) -> JSONResponse:
+        res = await run_in_threadpool(runtime.ptz_preset, req.name)
+        if not res.get("ok"):
+            return JSONResponse(res, status_code=int(res.pop("status", 400)))
+        return JSONResponse(res)
 
     @app.post("/api/robot/connect")
     def robot_connect(req: RobotConnect) -> dict:
@@ -237,6 +286,50 @@ def create_app(runtime: Any) -> FastAPI:
     @app.post("/api/eval/cancel")
     def eval_cancel() -> dict:
         return runtime.cancel_eval()
+
+    # ------------------------------------------------------------- training (CV)
+    @app.get("/api/train/readiness")
+    def train_readiness() -> dict:
+        return runtime.train_readiness()
+
+    @app.post("/api/train/run")
+    def train_run(req: TrainRun) -> JSONResponse:
+        res = runtime.start_train(req.model_dump())
+        if not res.get("ok"):
+            return JSONResponse(res, status_code=int(res.pop("status", 400)))
+        return JSONResponse(res)
+
+    @app.get("/api/train/status")
+    def train_status() -> dict:
+        return runtime.train_status()
+
+    @app.get("/api/train/report")
+    def train_report() -> JSONResponse:
+        result = runtime.train_result()
+        if result is None:
+            return _err(
+                "train_not_ready",
+                "no finished training run yet",
+                "no training job has completed since the server started",
+                "POST /api/train/run, poll /api/train/status until state=done",
+                status=404,
+            )
+        return JSONResponse({"ok": True, **result})
+
+    @app.post("/api/train/cancel")
+    def train_cancel() -> dict:
+        return runtime.cancel_train()
+
+    @app.get("/api/train/history")
+    def train_history(limit: int = 50) -> dict:
+        return runtime.train_history(limit=limit)
+
+    @app.post("/api/train/promote")
+    def train_promote(req: PromoteModel) -> JSONResponse:
+        res = runtime.promote_model(req.model_dump())
+        if not res.get("ok"):
+            return JSONResponse(res, status_code=int(res.pop("status", 400)))
+        return JSONResponse(res)
 
     @app.get("/api/history")
     def history(limit: int = 600, since: float | None = None) -> dict:
@@ -340,7 +433,17 @@ def create_app(runtime: Any) -> FastAPI:
                         except (ValueError, TypeError):
                             pass
                     else:  # mode
-                        runtime.set_mode(str(msg.get("mode", "IDLE")).upper())
+                        target = str(msg.get("mode", "IDLE")).upper()
+                        if target in ("MANUAL", "FOLLOW") and getattr(
+                            runtime, "training_active", False
+                        ):
+                            await nack(
+                                "train_active",
+                                "a training run is using the GPU",
+                                "cancel training in the CV tab before driving",
+                            )
+                            continue
+                        runtime.set_mode(target)
         except WebSocketDisconnect:
             pass
         finally:
