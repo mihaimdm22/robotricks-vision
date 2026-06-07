@@ -78,10 +78,16 @@ class FrameResult:
     fps: float = 0.0
     width: int = 0
     height: int = 0
+    # Set by CatRanger when CatTracker picks the followed cat (may differ from largest box).
+    target_observation: CatObservation | None = None
+    # All BoT-SORT ids seen for the current followed cat this session (tracker reassignments).
+    target_known_ids: list[int] = field(default_factory=list)
 
     @property
     def target(self) -> CatObservation | None:
-        """The currently followed cat = largest box (override in the tracker)."""
+        """The currently followed cat — tracker lock when set, else largest box."""
+        if self.target_observation is not None:
+            return self.target_observation
         if not self.observations:
             return None
         return max(self.observations, key=lambda o: o.detection.area)

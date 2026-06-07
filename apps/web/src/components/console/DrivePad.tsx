@@ -16,6 +16,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Telemetry } from "@/lib/useTelemetry";
+import { ControlTip, SectionHelp } from "./help";
+import type { HelpId } from "@/lib/console-help";
+
+const DRIVE_HELP: Record<string, HelpId> = {
+  forward: "drive.forward",
+  back: "drive.back",
+  left: "drive.left",
+  right: "drive.right",
+  stop: "drive.stop",
+};
 
 const KEYS: Record<string, string> = {
   w: "forward",
@@ -126,23 +136,28 @@ export function DrivePad({
   }, []);
 
   const padBtn = (action: string, label: string, area: string) => (
-    <button
+    <ControlTip
       key={action}
-      type="button"
-      disabled={!drivable}
-      style={{ gridArea: area }}
-      className="op-btn select-none text-lg disabled:opacity-100"
-      onPointerDown={(e) => {
-        e.preventDefault();
-        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-        startDrive(action);
-      }}
-      onPointerUp={stopDrive}
-      onPointerCancel={stopDrive}
-      onLostPointerCapture={stopDrive}
+      helpId={DRIVE_HELP[action] ?? "drive.stop"}
+      hostStyle={{ gridArea: area }}
+      fill
     >
-      {label}
-    </button>
+      <button
+        type="button"
+        disabled={!drivable}
+        className="op-btn h-full w-full select-none text-lg disabled:opacity-100"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+          startDrive(action);
+        }}
+        onPointerUp={stopDrive}
+        onPointerCancel={stopDrive}
+        onLostPointerCapture={stopDrive}
+      >
+        {label}
+      </button>
+    </ControlTip>
   );
 
   const lockMsg = estop
@@ -175,15 +190,16 @@ export function DrivePad({
       >
         {padBtn("forward", "▲", "up")}
         {padBtn("left", "◀", "left")}
-        <button
-          type="button"
-          disabled={!drivable}
-          style={{ gridArea: "mid" }}
-          className="op-btn font-bold text-stop"
-          onClick={stopDrive}
-        >
-          STOP
-        </button>
+        <ControlTip helpId="drive.stop" hostStyle={{ gridArea: "mid" }} fill>
+          <button
+            type="button"
+            disabled={!drivable}
+            className="op-btn h-full w-full font-bold text-stop"
+            onClick={stopDrive}
+          >
+            STOP
+          </button>
+        </ControlTip>
         {padBtn("right", "▶", "right")}
         {padBtn("back", "▼", "down")}
         {!drivable && (
@@ -192,13 +208,18 @@ export function DrivePad({
       </div>
 
       {!isController && telemetry && (
-        <button type="button" className="op-btn mt-3 w-full" onClick={onRequestControl}>
-          Request control
-        </button>
+        <ControlTip helpId="drive.request_control">
+          <button type="button" className="op-btn mt-3 w-full" onClick={onRequestControl}>
+            Request control
+          </button>
+        </ControlTip>
       )}
 
       <label className="mt-4 flex items-center gap-3 text-sm text-muted">
-        Speed
+        <span className="inline-flex shrink-0 items-center gap-1">
+          Speed
+          <SectionHelp helpId="drive.speed" />
+        </span>
         <input
           type="range"
           min={0.1}
@@ -211,7 +232,10 @@ export function DrivePad({
         <span className="font-mono text-fg">{speed.toFixed(1)}</span>
       </label>
       <label className="mt-2 flex items-center gap-3 text-sm text-muted">
-        Body yaw
+        <span className="inline-flex shrink-0 items-center gap-1">
+          Body yaw
+          <SectionHelp helpId="drive.body_yaw" />
+        </span>
         <input
           type="range"
           min={-1}

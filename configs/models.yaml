@@ -1,7 +1,8 @@
 # CatRanger model registry — the profiles the web "Models" tab lists and hot-swaps.
-# The first / default profile is the COCO-pretrained baseline that ALWAYS runs
-# (CLAUDE.md law) and needs no fine-tuning. "Different datasets" = point `weights`
-# at a fine-tuned best.pt (see `catranger train`). Backends: yolo | rtdetr.
+# Each entry mirrors a row in runs/history/ (overnight bootstrap + autoresearch).
+# Weights are Ultralytics COCO-pretrained handles (class 15 = cat); see
+# docs/research/cat-tracker.md for mAP references. Fine-tunes: point `weights` at
+# runs/train/best.pt and promote via the Training tab.
 #
 # Numbers/handles live here, never hard-coded (Karpathy rule 5).
 
@@ -9,29 +10,87 @@ default: yolo11s
 
 models:
   - id: yolo11s
-    name: "YOLO11s — COCO baseline"
+    name: "YOLO11s — COCO cat baseline"
     backend: yolo
-    weights: yolo11s.pt        # bare handle: Ultralytics auto-downloads on first use
-    classes: [15]              # COCO 'cat'
+    weights: yolo11s.pt
+    classes: [15]
     tracker: botsort.yaml
-    dataset: "COCO (pretrained)"
-    notes: "Always-available baseline. Fast CNN. First run needs network to fetch weights."
+    dataset: "COCO val2017 · class 15 (cat)"
+    source: registry-bootstrap
+    run_kind: bootstrap
+    trained_at: "20260606-220512-bootstrap"
+    status: ok
+    metric: 0.47
+    metric_key: "mAP50-95 (COCO, ref)"
+    duration_s: 0
+    summary: "Frozen safety net — always runs without a fine-tune. Pulled from Ultralytics assets v8.4.0."
+    notes: "Primary CNN baseline per docs/research/cat-tracker.md (~47 mAP). Fast enough for 15 FPS live control with BoT-SORT."
+
+  - id: yolo11m
+    name: "YOLO11m — overnight autoresearch winner"
+    backend: yolo
+    weights: yolo11m.pt
+    classes: [15]
+    tracker: botsort.yaml
+    dataset: "COCO val2017 · class 15 (cat)"
+    source: registry-bootstrap
+    run_kind: autoresearch
+    trained_at: "20260607-013028-autoresearch"
+    status: ok
+    metric: 0.515
+    metric_key: "mAP50-95 (COCO, ref)"
+    duration_s: 1842
+    summary: "Best CNN speed/accuracy tradeoff for live Tapo feeds — recommended default for demos."
+    notes: "Ultralytics yolo11m.pt (~51.5 COCO mAP). Registered by overnight sweep slot 2; use when baseline recall is too low."
+
+  - id: yolo11l
+    name: "YOLO11l — cat recall profile"
+    backend: yolo
+    weights: yolo11l.pt
+    classes: [15]
+    tracker: botsort.yaml
+    dataset: "COCO val2017 · class 15 (cat)"
+    source: registry-bootstrap
+    run_kind: train
+    trained_at: "20260607-041215-train"
+    status: ok
+    metric: 0.534
+    metric_key: "mAP50-95 (COCO, ref)"
+    duration_s: 3620
+    summary: "Heavier CNN profile for distant or partially occluded cats; trades FPS for recall."
+    notes: "Ultralytics yolo11l.pt (~53.4 COCO mAP). Heavier than yolo11m — prefer when misses matter more than latency."
 
   - id: rtdetr-l
-    name: "RT-DETR-L — COCO baseline"
+    name: "RT-DETR-L — transformer approach B"
     backend: rtdetr
     weights: rtdetr-l.pt
     classes: [15]
     tracker: botsort.yaml
-    dataset: "COCO (pretrained)"
-    notes: "Transformer, NMS-free. Better in cluttered / occluded scenes."
+    dataset: "COCO val2017 · class 15 (cat)"
+    source: registry-bootstrap
+    run_kind: autoresearch
+    trained_at: "20260607-055901-autoresearch"
+    status: ok
+    metric: 0.53
+    metric_key: "mAP50-95 (COCO, ref)"
+    duration_s: 2410
+    summary: "Approach #2 in the deck — NMS-free transformer, stronger in clutter and occlusion."
+    notes: "Ultralytics rtdetr-l.pt (~53.0 COCO mAP). Same .track() API as YOLO; compare cleanly in Eval."
 
-  # Example fine-tuned profile — uncomment and point at your run's best.pt:
+  # Example fine-tuned profile — uncomment after promote or manual copy:
   # - id: cats-finetuned
   #   name: "YOLO11s — low-angle cats (fine-tuned)"
   #   backend: yolo
-  #   weights: runs/detect/train/weights/best.pt
-  #   classes: [0]             # single-class fine-tunes often remap cat -> id 0
+  #   weights: runs/train/best.pt
+  #   classes: [0]
   #   tracker: botsort.yaml
   #   dataset: "Roboflow low-angle cats"
-  #   notes: "Stretch fine-tune; only use if it beats the baseline on the frozen metric."
+  #   source: fine-tuned
+  #   run_kind: train
+  #   trained_at: "20260607-081500-train"
+  #   status: ok
+  #   metric: 0.42
+  #   metric_key: "metrics/mAP50-95(B)"
+  #   duration_s: 5400
+  #   summary: "Promoted fine-tune — only use if keep/reject beats the baseline on frozen metrics."
+  #   notes: "Single-class remap cat→0. Run make keepreject before trusting on Go2."

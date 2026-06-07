@@ -205,6 +205,14 @@ def test_manual_state_forward_still_nudges() -> None:
     assert b.send(Command(v_fwd=0.6, state="MANUAL")) == "f"
 
 
+def test_backward_intent_nudges_back() -> None:
+    clk = FakeClock()
+    b = _bridge(clk)
+    b.send(Command(v_fwd=-0.6, state="MANUAL"))  # bootstrap 'b'
+    clk.advance(0.6)
+    assert b.send(Command(v_fwd=-0.6, state="MANUAL")) == "g"
+
+
 # 6) close() sends 'b' and is exception-safe ----------------------------------
 def test_close_sends_stop_and_closes_transport() -> None:
     clk = FakeClock()
@@ -232,3 +240,34 @@ def test_open_link_char_bad_port_degrades_to_dummy() -> None:
     # A nonexistent port must degrade to DummyBridge, never crash the run.
     link = open_link("char", "/dev/cu.this-port-does-not-exist-catranger")
     assert isinstance(link, DummyBridge)
+
+
+# 8) peripheral toggles -------------------------------------------------------
+def test_send_raw_toggles_buzzer_and_tracks_state() -> None:
+    clk = FakeClock()
+    ser = FakeSerial()
+    b = _bridge(clk, ser)
+    assert b.periph_state()["buzzer"] is True
+    assert b.send_raw("c") == "c"
+    assert b.periph_state()["buzzer"] is False
+    assert ser.written == b"c"
+
+
+def test_send_raw_all_off() -> None:
+    clk = FakeClock()
+    b = _bridge(clk)
+    b.send_raw("9")
+    assert b.periph_state() == {"buzzer": False, "rgb": False, "lcd": False}
+    b.send_raw("8")
+    assert b.periph_state() == {"buzzer": True, "rgb": True, "lcd": True}
+
+
+def test_sync_target_writes_i_line_once() -> None:
+    ser = FakeSerial()
+    b = _bridge(FakeClock(), ser)
+    b.sync_target(3, [3, 7])
+    assert ser.written == b"I3/7\n"
+    b.sync_target(3, [3, 7])
+    assert ser.written == b"I3/7\n"
+    b.sync_target(None, None)
+    assert ser.written == b"I3/7\nI-\n"

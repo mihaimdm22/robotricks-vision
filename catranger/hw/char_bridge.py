@@ -42,8 +42,27 @@ from catranger.types import Command
 # Single-char vocabulary of the tested firmware.
 CH_MANUAL_STOP = "b"
 CH_FORWARD = "f"
+CH_BACK = "g"
 CH_TURN_LEFT = "h"
 CH_TURN_RIGHT = "j"
+
+# Peripheral toggles (additive protocol — see arduino/cat_ranger/cat_ranger.ino).
+CH_BUZZER_TOGGLE = "c"
+CH_RGB_TOGGLE = "v"
+CH_LCD_TOGGLE = "k"
+CH_PERIPH_ALL_ON = "8"
+CH_PERIPH_ALL_OFF = "9"
+
+PERIPH_ACTIONS: dict[str, str] = {
+    "buzzer_toggle": CH_BUZZER_TOGGLE,
+    "rgb_toggle": CH_RGB_TOGGLE,
+    "lcd_toggle": CH_LCD_TOGGLE,
+    "all_on": CH_PERIPH_ALL_ON,
+    "all_off": CH_PERIPH_ALL_OFF,
+}
+
+SONAR_RANGE_CM = 200
+BUZZER_FAR_CM = 180
 
 
 def _drain_distance(rx: bytes) -> tuple[bytes, int | None]:
@@ -109,6 +128,9 @@ class CharBridge:
         self._inflight_until = 0.0  # firmware busy in a blocking primitive until this t
         self._rx = b""  # rolling RX buffer for D-line reassembly
         self._latest_cm: int | None = None  # sticky last known distance (safety gate)
+        # Host-side mirror of firmware peripheral toggles (updated when send_raw fires).
+        self.periph: dict[str, bool] = {"buzzer": True, "rgb": True, "lcd": True}
+        self._lcd_target_label = ""
 
         self._ser = transport
         if self._ser is None and port is not None:
@@ -120,6 +142,11 @@ class CharBridge:
                     "Use open_link(None) / DummyBridge for hardware-free testing."
                 ) from e
             self._ser = serial.Serial(port, baud, timeout=0)
+            # Ensure on-rig buzzer/RGB/LCD match firmware defaults after link open.
+            try:
+                self.send_raw(CH_PERIPH_ALL_ON)
+            except Exception:
+                pass
 
     # ---- quantization (pure given clock + state) -------------------------------
     def _decide(self, cmd: Command, now: float) -> str:
@@ -128,15 +155,17 @@ class CharBridge:
         if now < self._inflight_until:
             return ""
 
-        # Classify intent. SAFE/IDLE or no forward intent -> stop.
+        # Classify intent. SAFE/IDLE or no drive intent -> stop.
         if cmd.state in ("SAFE", "IDLE") or (
-            cmd.v_fwd <= 0.0 and abs(cmd.rotation) <= self.rot_thresh
+            abs(cmd.v_fwd) <= self.fwd_thresh and abs(cmd.rotation) <= self.rot_thresh
         ):
             intent = "stop"
         elif abs(cmd.rotation) > self.rot_thresh:
             intent = "turn_right" if cmd.rotation > 0 else "turn_left"
         elif cmd.v_fwd > self.fwd_thresh:
             intent = "forward"
+        elif cmd.v_fwd < -self.fwd_thresh:
+            intent = "backward"
         else:
             intent = "hold"
 
@@ -175,6 +204,9 @@ class CharBridge:
         if intent == "forward":
             self._inflight_until = now + self.nudge_inflight_s
             return CH_FORWARD
+        if intent == "backward":
+            self._inflight_until = now + self.nudge_inflight_s
+            return CH_BACK
         if intent == "turn_left":
             self._inflight_until = now + self.turn_inflight_s
             return CH_TURN_LEFT
@@ -189,6 +221,51 @@ class CharBridge:
                 self._ser.write(ch.encode("ascii"))  # type: ignore[attr-defined]
             except Exception:
                 pass
+
+    def _write_bytes(self, data: bytes) -> None:
+        self.sent.append(data.decode("ascii", errors="replace"))
+        if self._ser is not None:
+            try:
+                self._ser.write(data)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+    def sync_target(self, target_id: int | None, known_ids: list[int] | None = None) -> None:
+        """Push tracked cat id(s) to the physical LCD via ``I<label>\\n``."""
+        if known_ids:
+            label = "/".join(str(i) for i in known_ids[:4])
+        elif target_id is not None:
+            label = str(target_id)
+        else:
+            label = "-"
+        label = label[:16]
+        if label == self._lcd_target_label:
+            return
+        self._lcd_target_label = label
+        self._write_bytes(f"I{label}\n".encode("ascii"))
+
+    def _apply_periph_char(self, ch: str) -> None:
+        if ch == CH_BUZZER_TOGGLE:
+            self.periph["buzzer"] = not self.periph["buzzer"]
+        elif ch == CH_RGB_TOGGLE:
+            self.periph["rgb"] = not self.periph["rgb"]
+        elif ch == CH_LCD_TOGGLE:
+            self.periph["lcd"] = not self.periph["lcd"]
+        elif ch == CH_PERIPH_ALL_ON:
+            self.periph = {"buzzer": True, "rgb": True, "lcd": True}
+        elif ch == CH_PERIPH_ALL_OFF:
+            self.periph = {"buzzer": False, "rgb": False, "lcd": False}
+
+    def send_raw(self, ch: str) -> str:
+        """Send a one-off peripheral command char (not debounced like motion)."""
+        if not ch or len(ch) != 1:
+            raise ValueError("send_raw expects a single character")
+        self._apply_periph_char(ch)
+        self._write(ch)
+        return ch
+
+    def periph_state(self) -> dict[str, bool]:
+        return dict(self.periph)
 
     # ---- public interface (matches ArduinoBridge) ------------------------------
     def send(self, cmd: Command) -> str:

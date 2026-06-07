@@ -198,13 +198,19 @@ def open_link(
             print(f"[catranger] BLE unavailable ({e}); using DummyBridge")
             return DummyBridge(port=target, verbose=verbose)
 
-    if conn == "bt":
+    if conn in ("bt", "usb"):
+        # cat_ranger.ino speaks single-char commands (f/g/h/j/b) @ 9600 on Serial1
+        # (Bluetooth) or Serial (USB cable). NOT the legacy C dx dy rot pan protocol.
+        from catranger.hw.char_bridge import CharBridge
+
+        link_baud = 9600 if baud == 115200 else baud
         try:
-            return open_bt_spp(target, baud=9600 if baud == 115200 else baud)
-        except RuntimeError:
+            return CharBridge(port=target, baud=link_baud)
+        except Exception as e:
+            print(f"[catranger] {conn} char link unavailable ({e}); using DummyBridge")
             return DummyBridge(port=target, verbose=verbose)
 
-    # usb / auto-with-target -> serial
+    # auto-with-target -> legacy C/D serial (other sketches)
     try:
         return ArduinoBridge(port=target, baud=baud)
     except RuntimeError:

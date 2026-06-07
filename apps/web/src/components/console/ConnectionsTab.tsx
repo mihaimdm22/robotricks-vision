@@ -3,7 +3,7 @@
 /** Camera (wireless) + robot (BT/USB/BLE) connections, with M5 device
  * auto-discovery feeding a pick-list instead of requiring a typed target. */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   apiBase,
@@ -12,6 +12,7 @@ import {
   clearApiBase,
   type CameraProfile,
 } from "@/lib/api";
+import { ControlTip, SectionHelp, SectionTitle } from "./help";
 
 type Msg = { text: string; tone: "ok" | "warn" } | null;
 
@@ -31,16 +32,44 @@ export function ConnectionsTab() {
   const [camSpec, setCamSpec] = useState("");
   const [camProfile, setCamProfile] = useState<CameraProfile>("go2_1080p");
   const [camMsg, setCamMsg] = useState<Msg>(null);
+  const [sonarBaselineMm, setSonarBaselineMm] = useState(90);
+  const [sonarCalMsg, setSonarCalMsg] = useState<Msg>(null);
+  const [sonarCalBusy, setSonarCalBusy] = useState(false);
 
   const [conn, setConn] = useState("dummy");
   const [target, setTarget] = useState("");
-  const [baud, setBaud] = useState(115200);
+  const [baud, setBaud] = useState(9600);
   const [robotMsg, setRobotMsg] = useState<Msg>(null);
   const [ports, setPorts] = useState<{ target: string; label: string }[]>([]);
   const [discoverHint, setDiscoverHint] = useState<string | null>(null);
+  const [flashReady, setFlashReady] = useState<boolean | null>(null);
+  const [flashHint, setFlashHint] = useState<string | null>(null);
+  const [flashMsg, setFlashMsg] = useState<Msg>(null);
+  const [flashBusy, setFlashBusy] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function refreshFlashReadiness() {
+    const r = await api.flashReadiness();
+    setFlashReady(r.ok);
+    setFlashHint(
+      r.ok ? null : `${r.problem ?? "flash unavailable"}${r.fix ? ` — ${r.fix}` : ""}`,
+    );
+    return r;
+  }
+
+  useEffect(() => {
+    void refreshFlashReadiness();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
   async function connectCam() {
-    const r = await api.connectCamera(camSpec || "synthetic", camProfile);
+    const profile: CameraProfile = looksRtsp ? "tapo_c211" : camProfile;
+    if (looksRtsp && camProfile !== "tapo_c211") {
+      setCamProfile("tapo_c211");
+    }
+    const r = await api.connectCamera(camSpec || "synthetic", profile);
     if (r.ok) {
       // Uncalibrated intrinsics (placeholder distances) is a warn condition, not
       // a green ok — surface it WARN-toned so distance is never trusted blindly.
@@ -66,6 +95,7 @@ export function ConnectionsTab() {
     if (r.ok) {
       setPorts(r.serial);
       setDiscoverHint(r.hint ?? `${r.serial.length} port(s)${r.ble_available ? " · BLE available" : ""}`);
+      void refreshFlashReadiness();
     } else {
       setDiscoverHint(r.problem);
     }
@@ -79,6 +109,92 @@ export function ConnectionsTab() {
         tone: r.warning ? "warn" : r.connected ? "ok" : "warn",
       });
     else setRobotMsg({ text: errText(r), tone: "warn" });
+  }
+
+  async function calibrateDistanceWithSonar(dryRun = false) {
+    setSonarCalBusy(true);
+    setSonarCalMsg({ text: dryRun ? "previewing… (~5 s)" : "calibrating… (~5 s)", tone: "ok" });
+    try {
+      const profile: CameraProfile = looksRtsp ? "tapo_c211" : camProfile;
+      const r = await api.calibrateWithSonar({
+        camera: profile,
+        baseline_m: sonarBaselineMm / 1000,
+        dry_run: dryRun,
+      });
+      if (r.ok) {
+        const bits = [
+          dryRun ? "preview" : "saved",
+          r.scale != null ? `scale ${r.scale.toFixed(3)}` : null,
+          r.old_fy != null && r.new_fy != null ? `fy ${r.old_fy} → ${r.new_fy}` : null,
+          r.n_samples != null ? `${r.n_samples} samples` : null,
+        ].filter(Boolean);
+        setSonarCalMsg({
+          text: bits.join(" · "),
+          tone: r.warning ? "warn" : "ok",
+        });
+      } else {
+        setSonarCalMsg({ text: errText(r), tone: "warn" });
+      }
+    } finally {
+      setSonarCalBusy(false);
+    }
+  }
+
+  function stopFlashPoll() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setFlashBusy(false);
+  }
+
+  async function pollFlashStatus() {
+    const st = await api.flashStatus();
+    if (!st.ok) {
+      stopFlashPoll();
+      setFlashMsg({ text: errText(st), tone: "warn" });
+      return;
+    }
+    if (st.state === "running") {
+      setFlashMsg({ text: `flashing… ${st.elapsed_s ?? 0}s`, tone: "ok" });
+      return;
+    }
+    stopFlashPoll();
+    if (st.state === "done" && st.result?.ok) {
+      setFlashMsg({ text: "firmware uploaded — reconnect the robot", tone: "ok" });
+    } else {
+      const problem = st.error ?? st.result?.problem ?? "flash failed";
+      const fix = st.result?.fix;
+      setFlashMsg({
+        text: `${problem}${fix ? ` — ${fix}` : ""}`,
+        tone: "warn",
+      });
+    }
+  }
+
+  async function flashFirmware() {
+    setFlashMsg(null);
+    const ready = await refreshFlashReadiness();
+    if (!ready.ok) {
+      setFlashMsg({
+        text: `${ready.problem ?? "flash unavailable"}${ready.fix ? ` — ${ready.fix}` : ""}`,
+        tone: "warn",
+      });
+      return;
+    }
+    const port = target.trim() || null;
+    const r = await api.flashFirmware(port);
+    if (!r.ok) {
+      setFlashMsg({ text: errText(r), tone: "warn" });
+      return;
+    }
+    setFlashBusy(true);
+    setFlashMsg({ text: "compiling and uploading…", tone: "ok" });
+    setRobotMsg({ text: "robot disconnected for USB flash", tone: "warn" });
+    pollRef.current = setInterval(() => {
+      void pollFlashStatus();
+    }, 1500);
+    void pollFlashStatus();
   }
 
   // Render the full typed error: problem (cause) — fix. The old code dropped
@@ -98,7 +214,10 @@ export function ConnectionsTab() {
   return (
     <div className="flex flex-col gap-5">
       <section className="op-surface p-4">
-        <h3 className="mb-2 font-display font-semibold">Backend URL</h3>
+        <h3 className="mb-2 inline-flex items-center gap-1.5 font-display font-semibold">
+          Backend URL
+          <SectionHelp helpId="conn.backend_save" />
+        </h3>
         <p className="mb-2 text-xs text-dim">
           The control server (<code className="font-mono">catranger serve</code>).
           Saved in this browser and applied without a rebuild — point it at this
@@ -113,12 +232,16 @@ export function ConnectionsTab() {
           onChange={(e) => setBaseInput(e.target.value)}
         />
         <div className="mt-2 flex items-center gap-2">
-          <button type="button" className="op-btn" onClick={saveBase}>
-            Save &amp; reconnect
-          </button>
-          <button type="button" className="op-btn" onClick={resetBase}>
-            Reset to default
-          </button>
+          <ControlTip helpId="conn.backend_save">
+            <button type="button" className="op-btn" onClick={saveBase}>
+              Save &amp; reconnect
+            </button>
+          </ControlTip>
+          <ControlTip helpId="conn.backend_reset">
+            <button type="button" className="op-btn" onClick={resetBase}>
+              Reset to default
+            </button>
+          </ControlTip>
           <span className="ml-auto text-xs text-dim">
             {overridden ? "override active" : "build default"}
           </span>
@@ -126,7 +249,9 @@ export function ConnectionsTab() {
       </section>
 
       <section className="op-surface p-4">
-        <h3 className="mb-2 font-display font-semibold">Camera (wireless)</h3>
+        <SectionTitle helpId="conn.camera_connect" className="mb-2 font-display font-semibold">
+          Camera (wireless)
+        </SectionTitle>
         <div className="flex flex-col gap-2 sm:flex-row">
           <input
             className="w-full rounded-md border border-line bg-bg px-3 py-2 text-sm"
@@ -134,21 +259,22 @@ export function ConnectionsTab() {
             value={camSpec}
             onChange={(e) => setCamSpec(e.target.value)}
           />
-          <select
-            className="rounded-md border border-line bg-bg px-3 py-2 text-sm"
-            value={camProfile}
-            onChange={(e) => setCamProfile(e.target.value as CameraProfile)}
-            aria-label="Camera profile"
-            title="Sensor/lens profile — sets intrinsics + (un)distortion"
-          >
-            <option value="go2_1080p">go2_1080p</option>
-            <option value="tapo_c211">tapo_c211</option>
-          </select>
+          <ControlTip helpId="conn.camera_profile">
+            <select
+              className="rounded-md border border-line bg-bg px-3 py-2 text-sm"
+              value={camProfile}
+              onChange={(e) => setCamProfile(e.target.value as CameraProfile)}
+              aria-label="Camera profile"
+            >
+              <option value="go2_1080p">go2_1080p</option>
+              <option value="tapo_c211">tapo_c211</option>
+            </select>
+          </ControlTip>
         </div>
         {suggestTapo && (
           <div className="mt-2 text-xs text-warn">
-            This looks like an RTSP stream — the Tapo C211 needs the{" "}
-            <code className="font-mono">tapo_c211</code> profile for correct distances.
+            RTSP stream detected — use the <code className="font-mono">tapo_c211</code> profile
+            for pan/tilt and Tapo distance intrinsics (auto-selected on Connect).
           </div>
         )}
         <p className="mt-2 text-xs text-dim">
@@ -156,41 +282,107 @@ export function ConnectionsTab() {
           your cloud login.
         </p>
         <div className="mt-2 flex gap-2">
-          <button type="button" className="op-btn" onClick={connectCam}>
-            Connect
-          </button>
-          <button
-            type="button"
-            className="op-btn"
-            onClick={async () => {
-              await api.disconnectCamera();
-              setCamMsg({ text: "using synthetic source", tone: "ok" });
-            }}
-          >
-            Use synthetic
-          </button>
+          <ControlTip helpId="conn.camera_connect">
+            <button type="button" className="op-btn" onClick={connectCam}>
+              Connect
+            </button>
+          </ControlTip>
+          <ControlTip helpId="conn.camera_synthetic">
+            <button
+              type="button"
+              className="op-btn"
+              onClick={async () => {
+                await api.disconnectCamera();
+                setCamMsg({ text: "using synthetic source", tone: "ok" });
+              }}
+            >
+              Use synthetic
+            </button>
+          </ControlTip>
         </div>
         {msgEl(camMsg)}
       </section>
 
       <section className="op-surface p-4">
+        <SectionTitle helpId="conn.sonar_calibrate" className="mb-2 font-display font-semibold">
+          Distance calibration (HC-SR04)
+        </SectionTitle>
+        <p className="text-xs text-dim">
+          Uses live vision distance vs the ultrasonic sensor. The camera sits behind the
+          sensor along the boresight — default offset is 90&nbsp;mm (sensor reading + offset
+          = camera ground truth).
+        </p>
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <label className="flex items-center gap-2 text-sm">
+            <span className="inline-flex items-center gap-1 text-dim whitespace-nowrap">
+              Sensor → camera
+              <SectionHelp helpId="conn.sonar_offset" />
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={500}
+              className="w-24 rounded-md border border-line bg-bg px-3 py-2 text-sm"
+              value={sonarBaselineMm}
+              onChange={(e) => setSonarBaselineMm(parseInt(e.target.value, 10) || 0)}
+              aria-label="Sensor to camera offset in millimeters"
+            />
+            <span className="text-dim">mm</span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <ControlTip helpId="conn.sonar_calibrate">
+              <button
+                type="button"
+                className="op-btn"
+                disabled={sonarCalBusy}
+                onClick={() => void calibrateDistanceWithSonar(false)}
+              >
+                {sonarCalBusy ? "Sampling…" : "Calibrate (~5 s)"}
+              </button>
+            </ControlTip>
+            <ControlTip helpId="conn.sonar_preview">
+              <button
+                type="button"
+                className="op-btn"
+                disabled={sonarCalBusy}
+                onClick={() => void calibrateDistanceWithSonar(true)}
+              >
+                Preview
+              </button>
+            </ControlTip>
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-dim">
+          Connect camera + robot USB, track a cat (or flat target), hold 25–180&nbsp;cm from
+          the sonar with a steady echo.
+        </p>
+        {msgEl(sonarCalMsg)}
+      </section>
+
+      <section className="op-surface p-4">
         <div className="mb-2 flex items-center justify-between">
-          <h3 className="font-display font-semibold">Robot (Bluetooth / USB)</h3>
-          <button type="button" className="op-btn" onClick={discover}>
-            Scan devices
-          </button>
+          <SectionTitle helpId="conn.robot_connect" className="font-display font-semibold">
+            Robot (Bluetooth / USB)
+          </SectionTitle>
+          <ControlTip helpId="conn.robot_scan">
+            <button type="button" className="op-btn" onClick={discover}>
+              Scan devices
+            </button>
+          </ControlTip>
         </div>
         <div className="flex flex-col gap-2">
-          <select
-            className="rounded-md border border-line bg-bg px-3 py-2 text-sm"
-            value={conn}
-            onChange={(e) => setConn(e.target.value)}
-          >
+          <ControlTip helpId="conn.robot_type">
+            <select
+              className="rounded-md border border-line bg-bg px-3 py-2 text-sm"
+              value={conn}
+              onChange={(e) => setConn(e.target.value)}
+            >
             <option value="dummy">dummy (simulation)</option>
             <option value="bt">bt — HC-05 SPP</option>
             <option value="ble">ble — HM-10</option>
-            <option value="usb">usb — serial</option>
-          </select>
+            <option value="usb">usb — serial (char @ 9600)</option>
+            </select>
+          </ControlTip>
           {ports.length > 0 && (
             <select
               className="rounded-md border border-line bg-bg px-3 py-2 text-sm"
@@ -215,24 +407,42 @@ export function ConnectionsTab() {
             type="number"
             className="rounded-md border border-line bg-bg px-3 py-2 text-sm"
             value={baud}
-            onChange={(e) => setBaud(parseInt(e.target.value, 10) || 115200)}
+            onChange={(e) => setBaud(parseInt(e.target.value, 10) || 9600)}
           />
-          <div className="flex gap-2">
-            <button type="button" className="op-btn" onClick={connectRobot}>
-              Connect
-            </button>
-            <button
-              type="button"
-              className="op-btn"
-              onClick={async () => {
-                await api.disconnectRobot();
-                setRobotMsg({ text: "disconnected (simulation)", tone: "ok" });
-              }}
-            >
-              Disconnect
-            </button>
+          <div className="flex flex-wrap gap-2">
+            <ControlTip helpId="conn.robot_connect">
+              <button type="button" className="op-btn" onClick={connectRobot}>
+                Connect
+              </button>
+            </ControlTip>
+            <ControlTip helpId="conn.robot_disconnect">
+              <button
+                type="button"
+                className="op-btn"
+                onClick={async () => {
+                  await api.disconnectRobot();
+                  setRobotMsg({ text: "disconnected (simulation)", tone: "ok" });
+                }}
+              >
+                Disconnect
+              </button>
+            </ControlTip>
+            <ControlTip helpId="conn.robot_flash">
+              <button
+                type="button"
+                className="op-btn"
+                disabled={flashBusy}
+                onClick={() => void flashFirmware()}
+              >
+                {flashBusy ? "Flashing…" : "Flash firmware (USB)"}
+              </button>
+            </ControlTip>
           </div>
         </div>
+        {flashHint && flashReady === false && (
+          <div className="mt-2 text-xs text-warn">{flashHint}</div>
+        )}
+        {msgEl(flashMsg)}
         {discoverHint && <div className="mt-2 text-xs text-dim">{discoverHint}</div>}
         {msgEl(robotMsg)}
       </section>

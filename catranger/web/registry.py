@@ -34,6 +34,15 @@ class ModelProfile:
     tracker: str = "botsort.yaml"
     dataset: str = ""
     notes: str = ""
+    # Provenance / run-history fields for the Models tab (mirrors runs/history/index.jsonl).
+    source: str = ""  # e.g. registry-bootstrap | fine-tuned | autoresearch-winner
+    run_kind: str = ""  # bootstrap | train | autoresearch | prepare
+    trained_at: str = ""  # sortable stamp YYYYMMDD-HHMMSS-<suffix>
+    status: str = "ok"  # ok | fail | cancelled (display only for registry entries)
+    metric: float | None = None
+    metric_key: str | None = None
+    duration_s: float | None = None
+    summary: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> ModelProfile:
@@ -50,6 +59,8 @@ class ModelProfile:
         if not weights:
             raise ValueError(f"model {mid!r}: missing required 'weights'")
         classes = d.get("classes")
+        metric = d.get("metric")
+        duration = d.get("duration_s")
         return cls(
             id=str(mid),
             name=str(d.get("name", mid)),
@@ -59,7 +70,37 @@ class ModelProfile:
             tracker=str(d.get("tracker", "botsort.yaml")),
             dataset=str(d.get("dataset", "")),
             notes=str(d.get("notes", "")),
+            source=str(d.get("source", "")),
+            run_kind=str(d.get("run_kind", "")),
+            trained_at=str(d.get("trained_at", "")),
+            status=str(d.get("status", "ok")),
+            metric=float(metric) if metric is not None else None,
+            metric_key=str(d.get("metric_key")) if d.get("metric_key") is not None else None,
+            duration_s=float(duration) if duration is not None else None,
+            summary=str(d.get("summary", "")),
         )
+
+    def to_public_dict(self) -> dict[str, Any]:
+        """JSON-safe payload for GET /api/models (excludes weights/classes/tracker)."""
+        out: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "backend": self.backend,
+            "dataset": self.dataset,
+            "notes": self.notes,
+            "source": self.source,
+            "run_kind": self.run_kind,
+            "trained_at": self.trained_at,
+            "status": self.status,
+            "summary": self.summary,
+        }
+        if self.metric is not None:
+            out["metric"] = self.metric
+        if self.metric_key:
+            out["metric_key"] = self.metric_key
+        if self.duration_s is not None:
+            out["duration_s"] = self.duration_s
+        return out
 
 
 def _warn_class_id_drift(profile: ModelProfile) -> None:

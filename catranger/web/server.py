@@ -21,7 +21,13 @@ from typing import Any
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -56,6 +62,10 @@ class RobotConnect(BaseModel):
     baud: int = 115200
 
 
+class RobotFlash(BaseModel):
+    port: str | None = None  # USB serial device, e.g. /dev/cu.usbmodem14101
+
+
 class PtzMove(BaseModel):
     pan: float = 0.0  # [-1,1], + = right
     tilt: float = 0.0  # [-1,1], + = up
@@ -86,6 +96,32 @@ class PromoteModel(BaseModel):
     run_dir: str | None = None  # a runs/history/<dir> to promote its archived best.pt
     model_id: str | None = None
     name: str | None = None
+
+
+class SonarCalibrate(BaseModel):
+    camera: str | None = None  # go2_1080p | tapo_c211 — defaults to active profile
+    baseline_m: float | None = None  # sensor→camera offset along boresight (default 0.09 m)
+    duration_s: float | None = None  # sample window (default from configs/web.yaml)
+    dry_run: bool = False
+
+
+class CatRename(BaseModel):
+    name: str
+
+
+class CatFind(BaseModel):
+    follow: bool = True
+
+
+def _console_url(cfg: dict) -> str:
+    """Next.js operator console (cat library, picker, peripherals). Legacy panel is `/` only."""
+    for origin in cfg.get("cors_origins") or []:
+        if not origin:
+            continue
+        base = str(origin).rstrip("/")
+        if ":3000" in base or base.endswith(":3000"):
+            return f"{base}/console"
+    return "http://localhost:3000/console"
 
 
 def _err(code: str, problem: str, cause: str, fix: str, status: int = 400) -> JSONResponse:
@@ -136,10 +172,21 @@ def create_app(runtime: Any) -> FastAPI:
     arbiter = ControlArbiter(idle_timeout_s=float(cfg.get("control_idle_timeout_s", 8.0)))
     app.state.arbiter = arbiter
 
+    console_url = _console_url(cfg)
+
     # ----------------------------------------------------------------- pages
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(_STATIC / "index.html")
+
+    @app.get("/console")
+    def console_redirect() -> RedirectResponse:
+        """Send operators to the Next.js console (Cats tab, cat picker, CV jobs)."""
+        return RedirectResponse(url=console_url, status_code=302)
+
+    @app.get("/api/console_url")
+    def console_url_api() -> dict:
+        return {"ok": True, "url": console_url}
 
     if _STATIC.is_dir():
         app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
@@ -149,8 +196,8 @@ def create_app(runtime: Any) -> FastAPI:
     def status() -> dict:
         return runtime.status()
 
-    @app.post("/api/control")
-    def control(intent: ControlIntent) -> dict:
+    @app.post("/api/control", response_model=None)
+    def control(intent: ControlIntent) -> dict[str, Any] | JSONResponse:
         try:
             runtime.set_manual(intent.action, intent.value)
         except ValueError as exc:
@@ -162,8 +209,8 @@ def create_app(runtime: Any) -> FastAPI:
             )
         return {"ok": True}
 
-    @app.post("/api/mode")
-    def mode(intent: ModeIntent) -> dict:
+    @app.post("/api/mode", response_model=None)
+    def mode(intent: ModeIntent) -> dict[str, Any] | JSONResponse:
         target = intent.mode.upper()
         # T1: a training run owns the GPU — refuse a drive switch (no silent kill).
         if target in ("MANUAL", "FOLLOW") and getattr(runtime, "training_active", False):
@@ -206,10 +253,15 @@ def create_app(runtime: Any) -> FastAPI:
     @app.get("/api/models")
     def models() -> dict:
         s = runtime.status()
-        return {"models": s["models"], "active": s["model"], "status": s["model_status"]}
+        return {
+            "ok": True,
+            "models": s["models"],
+            "active": s["model"],
+            "status": s["model_status"],
+        }
 
-    @app.post("/api/models/select")
-    def select_model(sel: ModelSelect) -> dict:
+    @app.post("/api/models/select", response_model=None)
+    def select_model(sel: ModelSelect) -> dict[str, Any] | JSONResponse:
         try:
             return runtime.select_model(sel.id)
         except KeyError:
@@ -244,6 +296,20 @@ def create_app(runtime: Any) -> FastAPI:
             return JSONResponse(res, status_code=int(res.pop("status", 400)))
         return JSONResponse(res)
 
+    @app.post("/api/calibrate/sonar")
+    async def calibrate_sonar(req: SonarCalibrate) -> JSONResponse:
+        """Re-anchor fx/fy using HC-SR04 + vision target distance (camera ~90 mm behind sonar)."""
+        res = await run_in_threadpool(
+            runtime.calibrate_with_sonar,
+            profile=req.camera,
+            baseline_m=req.baseline_m,
+            duration_s=req.duration_s,
+            dry_run=req.dry_run,
+        )
+        if not res.get("ok"):
+            return JSONResponse(res, status_code=int(res.pop("status", 400)))
+        return JSONResponse(res)
+
     @app.post("/api/robot/connect")
     def robot_connect(req: RobotConnect) -> dict:
         return runtime.connect_robot(req.connection, req.target, req.baud)
@@ -256,6 +322,73 @@ def create_app(runtime: Any) -> FastAPI:
     async def robot_discover() -> dict:
         # serial port enumeration / BLE probe can block — keep it off the loop.
         return await run_in_threadpool(runtime.discover_devices)
+
+    @app.get("/api/robot/flash/readiness")
+    def robot_flash_readiness() -> dict:
+        return runtime.flash_readiness()
+
+    @app.post("/api/robot/flash")
+    def robot_flash(req: RobotFlash) -> JSONResponse:
+        res = runtime.start_flash(req.port)
+        if not res.get("ok"):
+            status = int(res.pop("status", 400))
+            return JSONResponse(res, status_code=status)
+        return JSONResponse(res)
+
+    @app.get("/api/robot/flash/status")
+    def robot_flash_status() -> dict:
+        return runtime.flash_status()
+
+    # ----------------------------------------------------------- cat library
+    @app.get("/api/cats")
+    def list_cats(limit: int = 200) -> dict:
+        return {"ok": True, "cats": runtime.list_library_cats(limit=limit)}
+
+    @app.get("/api/cats/{cat_id}")
+    def get_cat(cat_id: int) -> JSONResponse:
+        cat = runtime.get_library_cat(cat_id)
+        if cat is None:
+            return _err(
+                "unknown_cat",
+                f"no library cat with id {cat_id}",
+                "the id is not in the cat library database",
+                "GET /api/cats for saved cats",
+                status=404,
+            )
+        return JSONResponse({"ok": True, "cat": cat})
+
+    @app.patch("/api/cats/{cat_id}")
+    def rename_cat(cat_id: int, req: CatRename) -> JSONResponse:
+        res = runtime.rename_library_cat(cat_id, req.name)
+        if not res.get("ok"):
+            return _err(
+                "rename_failed",
+                "could not rename cat",
+                "name must be non-empty",
+                "send a non-blank name string",
+                status=400,
+            )
+        return JSONResponse({"ok": True, "id": cat_id, "name": req.name.strip()})
+
+    @app.delete("/api/cats/{cat_id}")
+    def delete_cat(cat_id: int) -> JSONResponse:
+        res = runtime.delete_library_cat(cat_id)
+        if not res.get("ok"):
+            return _err(
+                "delete_failed",
+                f"no library cat with id {cat_id}",
+                "already deleted or never saved",
+                "refresh the cat library tab",
+                status=404,
+            )
+        return JSONResponse({"ok": True, "id": cat_id})
+
+    @app.post("/api/cats/{cat_id}/find")
+    def find_cat(cat_id: int, req: CatFind) -> JSONResponse:
+        res = runtime.find_library_cat(cat_id, follow=req.follow)
+        if not res.get("ok"):
+            return JSONResponse(res, status_code=404)
+        return JSONResponse(res)
 
     # ------------------------------------------------------------------ eval
     @app.post("/api/eval/run")
@@ -423,6 +556,56 @@ def create_app(runtime: Any) -> FastAPI:
                         runtime.heartbeat()  # refresh the MANUAL watchdog
                     continue
 
+                if kind == "peripheral":
+                    action = str(msg.get("action", ""))
+                    res = runtime.set_peripheral(action)
+                    if not res.get("ok"):
+                        await nack(
+                            "peripheral",
+                            res.get("error", "peripheral command failed"),
+                            "connect CharBridge USB/BT firmware first",
+                        )
+                    continue
+
+                if kind == "select_target":
+                    raw_id = msg.get("id")
+                    follow = bool(msg.get("follow", False))
+                    try:
+                        tid = None if raw_id in (None, "auto", "") else int(raw_id)
+                    except (TypeError, ValueError):
+                        await nack(
+                            "bad_target",
+                            "invalid cat id",
+                            (f"could not parse id={raw_id!r}; send a numeric tracker id or 'auto'"),
+                        )
+                        continue
+                    runtime.select_target(tid, follow=follow)
+                    continue
+
+                if kind == "find_cat":
+                    raw_id = msg.get("library_id", msg.get("id"))
+                    follow = bool(msg.get("follow", True))
+                    try:
+                        lib_id = int(raw_id)
+                    except (TypeError, ValueError):
+                        await nack(
+                            "bad_library_cat",
+                            "invalid library cat id",
+                            (
+                                f"could not parse library_id={raw_id!r}; "
+                                "send a numeric library id from the Cats tab"
+                            ),
+                        )
+                        continue
+                    res = runtime.find_library_cat(lib_id, follow=follow)
+                    if not res.get("ok"):
+                        await nack(
+                            "unknown_library_cat",
+                            res.get("error", "unknown library cat"),
+                            "cat is not in the saved library; open the Cats tab and refresh",
+                        )
+                    continue
+
                 # Drive + mode require the token (auto-claimed if it's free).
                 if kind in ("intent", "mode"):
                     if not arbiter.note_intent(cid):
@@ -451,6 +634,7 @@ def create_app(runtime: Any) -> FastAPI:
                             )
                             continue
                         runtime.set_mode(target)
+                    continue
         except WebSocketDisconnect:
             pass
         finally:

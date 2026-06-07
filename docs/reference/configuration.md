@@ -87,6 +87,13 @@ Each entry is a hot-swappable profile in the console "Models" tab. The first/def
 | `models[].classes` | COCO ids to keep (single-class fine-tunes often remap cat→0) |
 | `models[].tracker` | tracker yaml |
 | `models[].dataset` / `notes` | provenance / guidance |
+| `models[].source` | `registry-bootstrap` \| `fine-tuned` \| … |
+| `models[].run_kind` | `bootstrap` \| `train` \| `autoresearch` (display; mirrors history) |
+| `models[].trained_at` | sortable stamp `YYYYMMDD-HHMMSS-<suffix>` |
+| `models[].status` | `ok` \| `fail` \| `cancelled` (display) |
+| `models[].metric` / `metric_key` | reference score shown in Models tab |
+| `models[].duration_s` | run duration in seconds (`0` = vendor bootstrap) |
+| `models[].summary` | one-line blurb for the Models tab |
 
 **Add a model:** add an entry, point `weights` at a `best.pt`. Only keep it if it beats
 the baseline on the frozen metric. (Backends extend via `detect._BACKENDS`.)

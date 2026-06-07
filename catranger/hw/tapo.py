@@ -6,22 +6,18 @@ re-anchored first (see configs/camera/tapo_c211.yaml -> needs_calibration).
 
 CAMERA ACCOUNT REQUIREMENT
 --------------------------
-RTSP and pytapo do NOT use your TP-Link cloud login. In the Tapo phone app open
+RTSP and ONVIF do NOT use your TP-Link cloud login. In the Tapo phone app open
     Advanced Settings -> Camera Account
 and create a local username + password. Those credentials are what you pass here
 (and what go into the rtsp:// URL). Without the Camera Account set, the camera
-refuses RTSP and ONVIF/pytapo connections.
+refuses RTSP and ONVIF connections.
 
-Frame pull is just RTSP over FFmpeg, delegated to catranger.io.frame_source so the
-rest of the codebase treats a live Tapo identically to a video file or image dir.
+Also enable **Me -> Tapo Lab -> Third-Party Compatibility** in the Tapo app if
+ONVIF/PTZ commands fail.
 
-    cam = TapoCamera("192.168.1.50", "camuser", "campass")          # main stream
-    cam = TapoCamera("192.168.1.50", "camuser", "campass", "stream2")  # ~360p
-    for idx, frame_bgr in cam.frames(stride=2, max_frames=300):
-        ...
-
-PTZ (the C211 is a pan/tilt cam) uses the `pytapo` library and is optional — only
-needed if you want the *camera* to track instead of the *chassis*.
+Frame pull is RTSP over FFmpeg (catranger.io.frame_source). Pan/tilt uses ONVIF
+(port 2020) with the same Camera Account — more reliable than pytapo on recent
+Tapo firmware, which often rejects Camera Account auth even when RTSP works.
 """
 
 from __future__ import annotations
@@ -32,6 +28,64 @@ import numpy as np
 
 from catranger.config import CameraConfig
 from catranger.io import frame_source
+
+_ONVIF_PORT = 2020
+# Console nudges are ±0.25; map to a small ONVIF RelativeMove step.
+_PTZ_STEP_SCALE = 0.2
+
+
+class _OnvifPtz:
+    """Tapo pan/tilt via ONVIF RelativeMove (Camera Account on port 2020)."""
+
+    def __init__(self, ip: str, user: str, pwd: str) -> None:
+        self._ip = str(ip)
+        self._user = str(user)
+        self._pwd = str(pwd)
+        self._profile_token: str | None = None
+        self._ptz = None
+
+    def _connect(self) -> None:
+        if self._ptz is not None:
+            return
+        try:
+            from onvif import ONVIFCamera
+        except Exception as e:  # pragma: no cover - optional dep
+            raise RuntimeError(
+                "onvif-zeep is required for Tapo pan/tilt "
+                "(uv sync --extra hw). Frame pulling via RTSP does NOT need it."
+            ) from e
+        cam = ONVIFCamera(self._ip, _ONVIF_PORT, self._user, self._pwd)
+        media = cam.create_media_service()
+        profiles = media.GetProfiles()
+        if not profiles:
+            raise RuntimeError("ONVIF: no media profiles on Tapo camera")
+        self._profile_token = profiles[0].token
+        self._ptz = cam.create_ptz_service()
+
+    def move(self, pan: float, tilt: float) -> None:
+        pan = max(-1.0, min(1.0, float(pan)))
+        tilt = max(-1.0, min(1.0, float(tilt)))
+        if abs(pan) < 0.05 and abs(tilt) < 0.05:
+            return
+        self._connect()
+        assert self._ptz is not None and self._profile_token is not None
+        req = self._ptz.create_type("RelativeMove")
+        req.ProfileToken = self._profile_token
+        req.Translation = {"PanTilt": {"x": pan * _PTZ_STEP_SCALE, "y": tilt * _PTZ_STEP_SCALE}}
+        self._ptz.RelativeMove(req)
+
+    def preset(self, name: str) -> None:
+        self._connect()
+        assert self._ptz is not None and self._profile_token is not None
+        presets = self._ptz.GetPresets({"ProfileToken": self._profile_token}) or []
+        for preset in presets:
+            if str(getattr(preset, "Name", "")) == str(name):
+                self._ptz.GotoPreset(
+                    {"ProfileToken": self._profile_token, "PresetToken": preset.token}
+                )
+                return
+        names = [getattr(p, "Name", p.token) for p in presets]
+        raise ValueError(f"no Tapo preset named {name!r}; have: {names}")
 
 
 class TapoCamera:
@@ -53,7 +107,7 @@ class TapoCamera:
         self.user = str(user)
         self.pwd = str(pwd)
         self.stream = str(stream)
-        self._tapo = None  # lazily built pytapo.Tapo handle for PTZ
+        self._ptz: _OnvifPtz | None = None
 
     # ------------------------------------------------------------------ frames
     @property
@@ -62,68 +116,32 @@ class TapoCamera:
         return f"rtsp://{self.user}:{self.pwd}@{self.ip}:554/{self.stream}"
 
     def frames(self, stride: int = 1, max_frames: int = 0) -> Iterator[tuple[int, np.ndarray]]:
-        """Yield (index, frame_bgr) from the live RTSP stream.
-
-        Delegates to catranger.io.frame_source, which opens the stream with the
-        FFmpeg backend. `stride` skips frames; `max_frames` caps the count
-        (0 = unlimited / run until the stream drops).
-        """
+        """Yield (index, frame_bgr) from the live RTSP stream."""
         yield from frame_source(self.rtsp_url, stride=stride, max_frames=max_frames)
 
     # --------------------------------------------------------------------- PTZ
-    def _ensure_tapo(self):
-        """Lazily build and cache the pytapo handle (raises a clear hint if missing)."""
-        if self._tapo is not None:
-            return self._tapo
-        try:
-            from pytapo import Tapo  # lazy: only needed for PTZ, not for frame pull
-        except Exception as e:  # pragma: no cover - depends on optional dep
-            raise RuntimeError(
-                "pytapo is required for Tapo pan/tilt control "
-                "(pip install pytapo). Frame pulling via .frames() does NOT need it."
-            ) from e
-        # pytapo authenticates against the same Camera Account used for RTSP.
-        self._tapo = Tapo(self.ip, self.user, self.pwd)
-        return self._tapo
+    def _ensure_ptz(self) -> _OnvifPtz:
+        if self._ptz is None:
+            self._ptz = _OnvifPtz(self.ip, self.user, self.pwd)
+        return self._ptz
 
     def move(self, pan: float, tilt: float) -> None:
-        """Continuous relative pan/tilt move, each in [-1, 1] (+pan = right,
-        +tilt = up). Maps onto pytapo.moveMotor(x, y) which takes a small signed
-        step. No-op for |value| below a deadband to avoid motor chatter."""
-        x = int(max(-1.0, min(1.0, float(pan))) * 100)
-        y = int(max(-1.0, min(1.0, float(tilt))) * 100)
-        if abs(x) < 5 and abs(y) < 5:
-            return
-        self._ensure_tapo().moveMotor(x, y)
+        """Relative pan/tilt nudge, each in [-1, 1] (+pan = right, +tilt = up)."""
+        self._ensure_ptz().move(pan, tilt)
 
     def preset(self, name: str) -> None:
-        """Recall a saved PTZ preset by name (presets are created in the Tapo app
-        or via pytapo). Resolves the name to its preset id, then triggers it."""
-        tapo = self._ensure_tapo()
-        presets = tapo.getPresets()  # {id: name}
-        target_id = None
-        for pid, pname in presets.items():
-            if str(pname) == str(name):
-                target_id = pid
-                break
-        if target_id is None:
-            raise ValueError(f"no Tapo preset named {name!r}; have: {list(presets.values())}")
-        tapo.setPreset(target_id)
+        """Recall a saved PTZ preset by name (created in the Tapo app)."""
+        self._ensure_ptz().preset(name)
 
     # ------------------------------------------------------------------ config
     @classmethod
     def from_config(cls, cam_cfg: CameraConfig, user: str, pwd: str) -> TapoCamera:
         """Build a TapoCamera from a CameraConfig whose `rtsp` field is a template
         like 'rtsp://USER:PASS@CAM_IP:554/stream1'. We parse the host and stream
-        out of the template and inject the real credentials.
-
-        Falls back to the config `name` only for labeling; the IP must be present
-        in the template (replace CAM_IP in the yaml, or pass a real host there).
-        """
+        out of the template and inject the real credentials."""
         template = cam_cfg.rtsp or ""
         ip = "CAM_IP"
         stream = "stream1"
-        # crude but dependency-free parse of rtsp://<auth>@<host>:554/<stream>
         body = template.split("://", 1)[-1]
         if "@" in body:
             body = body.split("@", 1)[1]

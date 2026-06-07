@@ -51,6 +51,24 @@ def test_recent_since_filters() -> None:
     s.close()
 
 
+def test_record_target_ids_roundtrip() -> None:
+    s = _store()
+    s.record(
+        ts=1.0,
+        est_m=2.0,
+        lo=1.8,
+        hi=2.2,
+        gt_cm=None,
+        target_id=12,
+        target_ids=[3, 7, 12],
+        mode="FOLLOW",
+    )
+    (row,) = s.recent()
+    assert row["target_id"] == 12
+    assert row["target_ids"] == [3, 7, 12]
+    s.close()
+
+
 def test_nullable_columns_roundtrip() -> None:
     s = _store()
     s.record(ts=1.0, est_m=2.0, lo=None, hi=None, gt_cm=186.0, target_id=None, mode=None)
@@ -58,5 +76,6 @@ def test_nullable_columns_roundtrip() -> None:
     assert (
         row["lo"] is None and row["hi"] is None and row["target_id"] is None and row["mode"] is None
     )
+    assert row["target_ids"] == []
     assert row["gt_cm"] == 186.0
     s.close()

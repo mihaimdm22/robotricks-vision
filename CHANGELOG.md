@@ -2,6 +2,39 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.8.1] - 2026-06-07
+
+Ship the full console experience for live cat tracking: saved cat library with face
+matching, reliable Tapo video in the Next.js console, manual peripheral toggles on
+the rig, and FOV-estimated Tapo intrinsics so distance reads are usable before a
+one-shot calibration.
+
+### Added
+- **Cat library** — SQLite catalog (`/api/cats`), auto-save on detection, **Cats**
+  tab with thumbnails, rename, delete, and **Find** (FOLLOW + bearing-biased search).
+- **Cat picker** — Control tab lists in-view and out-of-view targets; merges library
+  sightings with live overlay data.
+- **Same-origin MJPEG proxy** — `/api/catranger/video` fixes black video in the Next.js
+  console while WebSocket overlays keep updating.
+- **Peripherals panel** — manual headlight / laser toggles over the robot link with
+  live telemetry feedback.
+- **Console help** — contextual tooltips and detail modals across control surfaces.
+- **Sonar-assisted calibration** — `POST /api/calibrate/sonar` scales Tapo `fy` from
+  HC-SR04 ground truth.
+- **Arduino flash job** — web-triggered firmware upload for the CharBridge rig.
+
+### Changed
+- **Tapo C211 intrinsics** — `fx/fy` derived from 110° FOV (~672 px); distances are
+  approximate until refined with `scripts/calibrate_camera.py`.
+- **RTSP connect** — 15 s Tapo negotiation window; clearer fallback diagnostics.
+- **Overlay canvas** — draws all detection boxes when MJPEG repaints stall.
+- **CharBridge / firmware** — peripheral command vocabulary and state reporting.
+
+### Fixed
+- Black live video with floating cat boxes on `:3000/console` (cross-origin MJPEG).
+- Control tab / drive pad layout regressions from full-size tooltip wrappers.
+- Cats tab 404 when backend was not restarted after API additions.
+
 ## [0.8.0] - 2026-06-07
 
 Make the project legible in one read. The GitHub README is rebuilt to industry standard —
@@ -30,6 +63,31 @@ on the computer-vision and training stories. The scored perception core is untou
 - **Rares Ilasoaia's role** is now "Robotics mechanics champion".
 - **Team avatars** render via `next/image` `fill` (clears an aspect-ratio console warning).
 - **`apps/web/README.md`** opens with the two-challenge context and links the briefs.
+
+## [0.7.1] - 2026-06-07
+
+Stable cat identity across BoT-SORT ID churn: the pipeline now follows one cat via
+`CatTracker` lock logic instead of the largest box, accumulates every tracker id
+seen for that target, and surfaces them as `#3/7/12` in the overlay, telemetry
+strip, and SQLite history. Tapo RTSP streams auto-enable PTZ when credentials are
+present, and the Models tab lists registry entries with research-backed descriptions.
+
+### Added
+- **`known_ids` / `target_ids`** — alias set on `CatTracker`, persisted in
+  `HistoryStore` (`target_ids` JSON column with migration), forwarded through
+  runtime telemetry and legacy + React console UIs.
+- **`tests/test_track.py`** — lock handoff, coast, and alias accumulation coverage.
+
+### Changed
+- **`CatRanger.process()`** uses `CatTracker` for target selection; speed history
+  spans alias ids; follower no longer resets acquire when a new id is already known.
+- **Models registry** — richer `configs/models.yaml`, API descriptions from
+  `docs/research/cat-tracker.md`, Models tab shows full catalog.
+- **Tapo** — credentialed RTSP URLs attach PTZ handle; C211 profile defaults updated.
+
+### Fixed
+- Target box and telemetry showing a single BoT-SORT id after occlusion/reassign.
+- PTZ controls staying disabled after connecting an authenticated Tapo RTSP stream.
 
 ## [0.7.0] - 2026-06-07
 

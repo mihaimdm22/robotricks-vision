@@ -123,7 +123,13 @@ def cmd_serve(args) -> None:
             "Running in teleop + video mode (manual drive works, no detection)."
         )
     app = create_app(runtime)
-    print(f"[catranger] serving on http://{host}:{port}  (open from any device on this LAN)")
+    from catranger.web.server import _console_url
+
+    console = _console_url(cfg)
+    bind = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    print(f"[catranger] API + legacy panel: http://{bind}:{port}/")
+    print(f"[catranger] full console (Cats tab): {console}")
+    print("  run `make web` to start the Next.js dev server if it is not already up")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 

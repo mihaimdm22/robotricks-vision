@@ -55,7 +55,11 @@ Latch / clear the emergency stop. `estop` → `{ "ok": true, "estop": true }`; `
 ## REST — models
 
 ### `GET /api/models`
-→ `{ "models": [...], "active": "<id>", "status": "<model_status>" }`.
+→ `{ "ok": true, "models": [...], "active": "<id>", "status": "<model_status>" }`.
+
+Each model includes `id`, `name`, `backend`, `dataset`, plus run-history fields
+(`run_kind`, `trained_at`, `metric`, `metric_key`, `duration_s`, `summary`, `notes`)
+from `configs/models.yaml`. Weights paths are never exposed.
 
 ### `POST /api/models/select`
 ```json
@@ -104,6 +108,18 @@ Reverts to the `dummy` robot.
 
 ### `GET /api/robot/discover`
 Enumerate serial ports / probe BLE (off the event loop). → device list.
+
+### `GET /api/robot/flash/readiness`
+Probe whether `arduino-cli` and the bundled sketch (`arduino/cat_ranger`) are available on the server.
+
+### `POST /api/robot/flash`
+```json
+{ "port": "/dev/cu.usbmodem14101" }
+```
+Compile + upload the CatRanger firmware over USB. Disconnects the runtime robot link first (the port cannot be shared). Poll `GET /api/robot/flash/status` until `state` is `done` or `error`.
+
+### `GET /api/robot/flash/status`
+Background flash job state: `idle | running | done | error`.
 
 ---
 

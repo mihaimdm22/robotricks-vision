@@ -11,6 +11,7 @@
 import Link from "next/link";
 import { api } from "@/lib/api";
 import type { Telemetry, LinkState } from "@/lib/useTelemetry";
+import { ControlTip } from "./help";
 
 const MODE_COLOR: Record<string, string> = {
   IDLE: "var(--color-dim)",
@@ -52,9 +53,14 @@ export function SafetyHeader({
         {estop ? "E-STOP" : mode}
       </span>
 
-      {link !== "live" && (
+      {link === "connecting" && (
+        <span className="rounded-md px-2 py-0.5 text-xs font-mono uppercase tracking-wide text-muted">
+          connecting…
+        </span>
+      )}
+      {link === "disconnected" && (
         <span className="rounded-md px-2 py-0.5 text-xs font-mono uppercase tracking-wide text-warn">
-          {link === "connecting" ? "connecting…" : "link lost"}
+          link lost
         </span>
       )}
 
@@ -64,18 +70,22 @@ export function SafetyHeader({
           telemetry socket is down (where send() would silently no-op) — the one
           moment you most need the stop to land. */}
       {estop && (
-        <button
-          type="button"
-          className="op-btn"
-          style={{ borderColor: "var(--color-ok)" }}
-          onClick={() => api.reset()}
-        >
-          ARM / RESET
-        </button>
+        <ControlTip helpId="safety.reset">
+          <button
+            type="button"
+            className="op-btn"
+            style={{ borderColor: "var(--color-ok)" }}
+            onClick={() => api.reset()}
+          >
+            ARM / RESET
+          </button>
+        </ControlTip>
       )}
-      <button type="button" className="op-btn op-estop" onClick={() => api.estop()}>
-        ■ E-STOP
-      </button>
+      <ControlTip helpId="safety.estop">
+        <button type="button" className="op-btn op-estop" onClick={() => api.estop()}>
+          ■ E-STOP
+        </button>
+      </ControlTip>
     </header>
   );
 }

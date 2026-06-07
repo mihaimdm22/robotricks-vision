@@ -70,6 +70,7 @@ def build_overlay(
 
     w, h = int(result.width), int(result.height)
     target = result.target
+    known_ids = list(result.target_known_ids or [])
     dets: list[dict] = []
     for obs in result.observations:
         det = obs.detection
@@ -92,9 +93,11 @@ def build_overlay(
             flags.append("no_distance")
         if float(det.conf) < lc:
             flags.append("low_conf")
+        is_target = bool(target is not None and obs is target)
         dets.append(
             {
                 "track_id": det.track_id,
+                "known_track_ids": known_ids if is_target else [],
                 "cls": det.cls_name,
                 "xyxy_norm": _norm_xyxy(det.xyxy, w, h),
                 "conf": round(float(det.conf), 3),
@@ -102,7 +105,7 @@ def build_overlay(
                 "dist_lo": lo,
                 "dist_hi": hi,
                 "bearing_deg": round(float(obs.bearing_deg), 1),
-                "is_target": bool(target is not None and obs is target),
+                "is_target": is_target,
                 "flags": flags,
             }
         )

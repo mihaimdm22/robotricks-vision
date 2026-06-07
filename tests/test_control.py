@@ -24,14 +24,23 @@ class FakeClock:
 
 
 def _frame(
-    track_id: int = 1, meters: float = 2.0, bearing_deg: float = 0.0, idx: int = 0
+    track_id: int = 1,
+    meters: float = 2.0,
+    bearing_deg: float = 0.0,
+    idx: int = 0,
+    known_ids: list[int] | None = None,
 ) -> FrameResult:
     det = Detection(
         xyxy=(900.0, 400.0, 1020.0, 580.0), conf=0.9, cls_id=15, cls_name="cat", track_id=track_id
     )
     dist = DistanceResult(meters=meters, lo=meters - 0.1, hi=meters + 0.1, method="geometry")
     obs = CatObservation(detection=det, distance=dist, bearing_deg=bearing_deg)
-    return FrameResult(frame_index=idx, observations=[obs])
+    return FrameResult(
+        frame_index=idx,
+        observations=[obs],
+        target_observation=obs,
+        target_known_ids=known_ids or [track_id],
+    )
 
 
 def _empty(idx: int = 0) -> FrameResult:
@@ -55,6 +64,16 @@ def test_acquire_then_track_sequence() -> None:
     assert states[:3] == ["ACQUIRE", "ACQUIRE", "ACQUIRE"]
     assert states[3] == "TRACK"
     assert states[4] == "TRACK"
+
+
+def test_alias_track_id_does_not_reset_acquire() -> None:
+    clk = FakeClock()
+    f = Follower({"acquire_frames": 3}, clock=clk)
+    for i in range(3):
+        clk.advance(0.066)
+        assert f.step(_frame(track_id=1, idx=i, known_ids=[1])).state == "ACQUIRE"
+    clk.advance(0.066)
+    assert f.step(_frame(track_id=7, idx=3, known_ids=[1, 7])).state == "TRACK"
 
 
 def test_safe_state_never_drives_forward_from_rest() -> None:

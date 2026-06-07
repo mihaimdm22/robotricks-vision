@@ -13,6 +13,7 @@ guarded by the server route tests + the `web` CI leg.
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import logging
 import threading
@@ -22,9 +23,18 @@ from typing import Any
 
 import numpy as np
 
+from catranger.calibrate_sonar import (
+    calibrate_camera_with_sonar,
+    collect_sonar_ratios,
+)
+from catranger.hw.char_bridge import BUZZER_FAR_CM, SONAR_RANGE_CM
 from catranger.types import Command, FrameResult
+from catranger.web.cat_catalog import _crop_thumb_b64, build_cat_catalog
+from catranger.web.cat_library import CatLibraryStore
+from catranger.web.cat_match import thumb_similarity
 from catranger.web.controller import Mode, RobotController, StopReason
 from catranger.web.eval_job import EvalJob
+from catranger.web.flash_job import FlashJob
 from catranger.web.overlay import build_overlay
 from catranger.web.registry import ModelProfile, ModelRegistry, apply_profile
 from catranger.web.store import DistanceStore
@@ -145,9 +155,24 @@ class RobotRuntime:
         self._history_interval = 1.0 / float(cfg.get("history_hz", 4) or 4)
         self._last_record_ts = 0.0
         self._last_dist: tuple[float | None, float | None, float | None] = (None, None, None)
+        self._sonar_display_cm: int | None = None
+        self._preferred_target_id: int | None = None
+        self._cat_catalog: list[dict] = []
+        cat_hz = float(cfg.get("cat_catalog_hz", 2) or 2)
+        self._cat_catalog_interval = 1.0 / cat_hz if cat_hz > 0 else 0.5
+        self._last_cat_catalog_ts = 0.0
+        self._session_seen: dict[int, dict] = {}
+        lib_db = str(cfg.get("cat_library_db", "outputs/cat_library.sqlite3"))
+        self.cat_library = CatLibraryStore(lib_db)
+        self._tracker_to_library: dict[int, int] = {}
+        self._find_library_id: int | None = None
+        self._find_library_name: str | None = None
+        self._match_threshold = float(cfg.get("cat_match_threshold", 0.55))
 
         # M3: one background eval job, started/polled from the Eval tab.
         self.eval_job = EvalJob()
+        # Connections tab: flash Arduino firmware over USB (arduino-cli).
+        self.flash_job = FlashJob()
         # WS-A7: durable-queue row id of the running HEAVY web job (eval OR train — they
         # share one slot via _heavy_lock) + its last heartbeat (monotonic). The worker
         # refreshes the lease on progress ticks so a long job is never reclaimed as
@@ -285,6 +310,7 @@ class RobotRuntime:
             except Exception:
                 pass
         self.store.close()
+        self.cat_library.close()
 
     # ------------------------------------------------------------- the loop
     def _run(self) -> None:
@@ -304,9 +330,11 @@ class RobotRuntime:
                     self.controller.camera_connected = True
                     self._last_frame_ts = time.perf_counter()
                     result, draw_frame = self._perceive(frame, idx)
+                    self._try_match_library_target(draw_frame, result)
                     cmd = self.controller.apply(result, frame_index=idx)
                     self._publish(self._encode(draw_frame, result, cmd))
                     self._observe(result)
+                    self._maybe_update_cat_catalog(draw_frame, result)
                     self._last_overlay = build_overlay(
                         result,
                         idx,
@@ -327,9 +355,15 @@ class RobotRuntime:
         sample to the history store (model estimate vs HC-SR04 truth over time)."""
         est = lo = hi = None
         target_id = None
+        target_ids: list[int] = []
         tgt = result.target
         if tgt is not None:
             target_id = tgt.track_id
+            target_ids = list(result.target_known_ids or [])
+            if target_id is not None and target_id not in target_ids:
+                target_ids = [target_id, *target_ids]
+            elif not target_ids and target_id is not None:
+                target_ids = [target_id]
             d = tgt.distance
             if d is not None and np.isfinite(d.meters):
                 est, lo, hi = round(d.meters, 3), round(d.lo, 3), round(d.hi, 3)
@@ -349,8 +383,102 @@ class RobotRuntime:
             hi=hi,
             gt_cm=gt_cm,
             target_id=target_id,
+            target_ids=target_ids or None,
             mode=self.controller.mode.value,
         )
+
+    def _maybe_update_cat_catalog(self, frame: np.ndarray, result: FrameResult) -> None:
+        now = time.perf_counter()
+        encode_thumbs = (now - self._last_cat_catalog_ts) >= self._cat_catalog_interval
+        if encode_thumbs:
+            self._last_cat_catalog_ts = now
+        locked: int | None = None
+        if self._ranger is not None:
+            locked = self._ranger.tracker.locked_id
+        elif result.target is not None:
+            locked = result.target.track_id
+        live = build_cat_catalog(
+            frame if encode_thumbs else None,
+            result,
+            locked_id=locked,
+            preferred_id=self._preferred_target_id,
+            previous=self._cat_catalog,
+            encode_thumbs=encode_thumbs,
+        )
+        live_ids = set()
+        for card in live:
+            card["in_view"] = True
+            tid = int(card["id"])
+            live_ids.add(tid)
+            self._session_seen[tid] = dict(card)
+            if encode_thumbs and card.get("thumb_jpeg_b64"):
+                self._register_library_sighting(card)
+
+        merged: dict[int, dict] = {int(c["id"]): c for c in live}
+        for tid, prev in self._session_seen.items():
+            if tid in live_ids:
+                continue
+            off = dict(prev)
+            off["in_view"] = False
+            off["is_locked"] = locked is not None and tid == int(locked)
+            off["is_preferred"] = self._preferred_target_id is not None and tid == int(
+                self._preferred_target_id
+            )
+            merged[tid] = off
+
+        self._cat_catalog = sorted(
+            merged.values(),
+            key=lambda c: (not c.get("in_view", True), -float(c.get("conf", 0))),
+        )
+
+    def _register_library_sighting(self, card: dict) -> None:
+        tid = int(card["id"])
+        thumb_b64 = card.get("thumb_jpeg_b64")
+        if not thumb_b64:
+            return
+        try:
+            thumb = base64.standard_b64decode(thumb_b64)
+        except Exception:
+            return
+        lib_id = self.cat_library.upsert_sighting(
+            library_id=self._tracker_to_library.get(tid),
+            tracker_id=tid,
+            thumb_jpeg=thumb,
+            conf=float(card.get("conf", 0.0)),
+            dist_m=card.get("dist_m"),
+            bearing_deg=float(card.get("bearing_deg", 0.0)),
+        )
+        self._tracker_to_library[tid] = lib_id
+        card["library_id"] = lib_id
+
+    def _try_match_library_target(self, frame: np.ndarray, result: FrameResult) -> None:
+        if self._find_library_id is None or self._ranger is None:
+            return
+        template = self.cat_library.get_thumb_bytes(self._find_library_id)
+        if template is None:
+            return
+        best_tid: int | None = None
+        best_score = 0.0
+        for obs in result.observations:
+            tid = obs.track_id
+            if tid is None:
+                continue
+            crop_b64 = _crop_thumb_b64(frame, obs.detection.xyxy, 72)
+            if not crop_b64:
+                continue
+            try:
+                crop = base64.standard_b64decode(crop_b64)
+            except Exception:
+                continue
+            score = thumb_similarity(template, crop)
+            if score > best_score:
+                best_score = score
+                best_tid = int(tid)
+        if best_tid is None or best_score < self._match_threshold:
+            return
+        self._find_library_id = None
+        self._find_library_name = None
+        self.select_target(best_tid, follow=True)
 
     def _pace(self, interval: float, t0: float) -> None:
         if interval <= 0:
@@ -405,6 +533,17 @@ class RobotRuntime:
 
     def telemetry(self) -> dict:
         t = dict(self.controller.latest_telemetry)
+        gt = t.get("gt_cm")
+        gt_cm = int(gt) if isinstance(gt, int) else None
+        if gt_cm is not None and gt_cm >= 0:
+            self._sonar_display_cm = gt_cm
+        display_cm = gt_cm if gt_cm is not None and gt_cm >= 0 else self._sonar_display_cm
+        bridge = self.controller._bridge
+        periph = (
+            bridge.periph_state()
+            if bridge is not None and hasattr(bridge, "periph_state")
+            else None
+        )
         age_ms = (
             (time.perf_counter() - self._last_frame_ts) * 1000.0 if self._last_frame_ts else None
         )
@@ -418,6 +557,7 @@ class RobotRuntime:
                 "camera": self.camera_spec,
                 "camera_profile": self.camera_profile,
                 "camera_calibrated": self.camera_calibrated,
+                "ptz_available": self._tapo is not None,
                 "robot": self.robot_desc,
                 "frame_age_ms": round(age_ms, 1) if age_ms is not None else None,
                 "target_dist_lo": self._last_dist[1],
@@ -432,6 +572,25 @@ class RobotRuntime:
                 # WS-B0: per-detection overlay contract (boxes/dist/flags + frame_id)
                 # the console draws on a canvas over the MJPEG frame.
                 "overlay": self._last_overlay,
+                # HC-SR04 + on-rig peripherals (CharBridge firmware).
+                "peripherals": periph,
+                "sonar_range_cm": SONAR_RANGE_CM,
+                "sonar_display_cm": display_cm,
+                "sonar_no_echo": gt_cm == -1,
+                "sonar_zone": self._sonar_zone(display_cm),
+                "sonar_obstacle": (
+                    display_cm is not None and 0 <= display_cm <= self.controller.safe_stop_cm
+                ),
+                "buzzer_active": bool(
+                    periph
+                    and periph.get("buzzer")
+                    and display_cm is not None
+                    and 0 <= display_cm <= BUZZER_FAR_CM
+                ),
+                "preferred_target_id": self._preferred_target_id,
+                "cats": self._cat_catalog,
+                "find_library_id": self._find_library_id,
+                "find_library_name": self._find_library_name,
             }
         )
         return t
@@ -447,14 +606,12 @@ class RobotRuntime:
             "camera": self.camera_spec,
             "camera_profile": self.camera_profile,
             "camera_calibrated": self.camera_calibrated,
+            "ptz_available": self._tapo is not None,
             "model": self.active_model.id,
             "model_status": self.model_status,
             "model_error": self.model_error,
             "perception_available": self.perception_available,
-            "models": [
-                {"id": m.id, "name": m.name, "backend": m.backend, "dataset": m.dataset}
-                for m in self.registry.list()
-            ],
+            "models": [m.to_public_dict() for m in self.registry.list()],
         }
 
     # ------------------------------------------------------------- devices
@@ -483,19 +640,32 @@ class RobotRuntime:
             "label": self.camera_spec,
             "warning": self._diagnose_camera(spec) if fell_back else None,
         }
-        # Optionally re-anchor distance intrinsics to a camera profile in the same
-        # call (the Connections-tab dropdown). Without this, Tapo frames keep the
-        # Go2 intrinsics and every distance is wrong by a constant (frozen rubric).
-        if camera:
-            re = self.reanchor_camera(camera)
+        # RTSP streams are the Tapo C211 in this project — the default go2_1080p profile
+        # disables pan/tilt and uses the wrong intrinsics. Auto-select tapo_c211 unless
+        # the operator explicitly picked another profile for a non-RTSP source.
+        profile = camera
+        profile_note: str | None = None
+        if spec.lower().startswith("rtsp://") and profile in (None, "go2_1080p"):
+            profile = "tapo_c211"
+            profile_note = (
+                "RTSP detected — switched camera profile to tapo_c211 "
+                "(required for pan/tilt and Tapo distance intrinsics)"
+            )
+        if profile:
+            re = self.reanchor_camera(profile)
             result["camera_profile"] = re.get("camera_profile")
             result["calibrated"] = re.get("calibrated")
             if re.get("warning") and not result["warning"]:
                 result["warning"] = re.get("warning")
+            elif profile_note and not result["warning"]:
+                result["warning"] = profile_note
+            elif profile_note and result["warning"]:
+                result["warning"] = f"{profile_note}; {result['warning']}"
         else:
             result["camera_profile"] = self.camera_profile
             result["calibrated"] = self.camera_calibrated
-        self._set_tapo_handle(spec, self.camera_profile)
+        self._set_tapo_handle(spec)
+        result["ptz_available"] = self._tapo is not None
         return result
 
     def _diagnose_camera(self, spec: str) -> str:
@@ -526,20 +696,23 @@ class RobotRuntime:
             "the stream path (using synthetic for now)"
         )
 
-    def _set_tapo_handle(self, spec: str, profile: str | None) -> None:
-        """Build (or clear) the TapoCamera PTZ handle. PTZ is only available when the
-        active camera is a Tapo rtsp source — the runtime otherwise opens generic
-        OpenCV and has no pan/tilt handle (Eng/DX review)."""
-        self._tapo = None
-        if profile == "tapo_c211" and spec.lower().startswith("rtsp://"):
-            try:
-                from catranger.hw.tapo import TapoCamera
+    def _set_tapo_handle(self, spec: str) -> None:
+        """Build (or clear) the TapoCamera PTZ handle from an RTSP URL with credentials.
 
-                host, user, pwd, stream = _parse_rtsp(spec)
-                if host:
-                    self._tapo = TapoCamera(host, user, pwd, stream)
-            except Exception:
-                self._tapo = None
+        Pan/tilt uses ONVIF on the same host — independent of the intrinsics profile
+        dropdown, so a mistaken go2_1080p selection does not disable the motor.
+        """
+        self._tapo = None
+        if not spec.lower().startswith("rtsp://"):
+            return
+        try:
+            from catranger.hw.tapo import TapoCamera
+
+            host, user, pwd, stream = _parse_rtsp(spec)
+            if host and user and pwd:
+                self._tapo = TapoCamera(host, user, pwd, stream)
+        except Exception:
+            self._tapo = None
 
     # ------------------------------------------------------------------- PTZ
     def ptz_move(self, pan: float, tilt: float) -> dict:
@@ -564,7 +737,8 @@ class RobotRuntime:
                     "ptz_failed",
                     "pan/tilt command failed",
                     str(exc),
-                    "pip install pytapo and set the Tapo Camera Account (not the cloud login)",
+                    "enable Third-Party Compatibility (Tapo app -> Me -> Tapo Lab), "
+                    "set a Camera Account, and run uv sync --extra hw",
                 )
         self._last_ptz_ts = now
         return {"ok": True}
@@ -586,7 +760,7 @@ class RobotRuntime:
                     "ptz_failed",
                     f"could not recall preset {name!r}",
                     str(exc),
-                    "create the preset in the Tapo app, or check pytapo + Camera Account",
+                    "create the preset in the Tapo app, or check ONVIF + Camera Account",
                 )
         return {"ok": True}
 
@@ -704,7 +878,10 @@ class RobotRuntime:
         # WS-C3: the one model home — apply_profile injects backend/weights/classes/
         # tracker (and clears a stale class filter) on this fresh copy.
         approach = apply_profile(app, profile, approach_key="_web")
-        return CatRanger(app, approach=approach, use_depth=False)
+        ranger = CatRanger(app, approach=approach, use_depth=False)
+        if self._preferred_target_id is not None:
+            ranger.set_preferred_target(self._preferred_target_id)
+        return ranger
 
     # --------------------------------------------------------------- eval (M3)
     def start_eval(self, params: dict) -> dict:
@@ -970,8 +1147,25 @@ class RobotRuntime:
             )
         model_id = str(params.get("model_id") or "cats-finetuned")
         name = str(params.get("name") or "Fine-tuned cats")
+        winner = promote_mod.read_winner()
+        promote_kw: dict[str, Any] = {"model_id": model_id, "name": name}
+        if run_dir:
+            stamp = run_dir.rsplit("/", 1)[-1]
+            promote_kw["trained_at"] = stamp
+            if "-" in stamp:
+                promote_kw["run_kind"] = stamp.rsplit("-", 1)[-1]
+        if winner:
+            if winner.get("metric") is not None:
+                promote_kw["metric"] = winner.get("metric")
+            if winner.get("metric_key"):
+                promote_kw["metric_key"] = winner.get("metric_key")
+            if winner.get("duration_s") is not None:
+                promote_kw["duration_s"] = winner.get("duration_s")
+            if winner.get("summary"):
+                promote_kw["summary"] = winner.get("summary")
+            promote_kw.setdefault("run_kind", "autoresearch")
         try:
-            summary = promote_mod.promote_weights(weights, model_id=model_id, name=name)
+            summary = promote_mod.promote_weights(weights, **promote_kw)
         except Exception as exc:
             return _eval_err(
                 "promote_failed",
@@ -993,6 +1187,48 @@ class RobotRuntime:
                 status=500,
             )
         return {"ok": True, **summary}
+
+    # -------------------------------------------------------- flash firmware (USB)
+    def flash_readiness(self) -> dict:
+        from catranger.hw.arduino_flash import readiness
+
+        return {"ok": True, **readiness()}
+
+    def start_flash(self, port: str | None = None) -> dict:
+        """Compile + upload cat_ranger.ino via arduino-cli. Disconnects the robot
+        bridge first — the USB serial port cannot be shared with runtime control."""
+        from catranger.hw.arduino_flash import readiness
+
+        ready = readiness()
+        if not ready.get("ok"):
+            return {
+                "ok": False,
+                "code": "flash_unavailable",
+                "problem": str(ready.get("problem") or "flash not available"),
+                "fix": ready.get("fix"),
+            }
+        if self.flash_job.status()["state"] == "running":
+            return {
+                "ok": False,
+                "code": "flash_busy",
+                "problem": "a firmware flash is already in progress",
+                "fix": "wait for it to finish, then retry",
+                "status": 409,
+            }
+        # Release the serial port before arduino-cli upload grabs it.
+        self.connect_robot("dummy")
+        started = self.flash_job.start(port or None)
+        if not started:
+            return {
+                "ok": False,
+                "code": "flash_busy",
+                "problem": "a firmware flash is already in progress",
+                "status": 409,
+            }
+        return {"ok": True, "state": "running", "port": port}
+
+    def flash_status(self) -> dict:
+        return {"ok": True, **self.flash_job.status()}
 
     # ----------------------------------------------------------- discovery (M5)
     def discover_devices(self) -> dict:
@@ -1035,6 +1271,222 @@ class RobotRuntime:
 
     def heartbeat(self) -> None:
         self.controller.heartbeat()
+
+    def set_peripheral(self, action: str) -> dict[str, Any]:
+        """Toggle HC-SR04 feedback peripherals on the CharBridge firmware (buzzer/RGB/LCD)."""
+        from catranger.hw.char_bridge import PERIPH_ACTIONS, CharBridge
+
+        ch = PERIPH_ACTIONS.get(action)
+        if ch is None:
+            return {"ok": False, "error": f"unknown peripheral action {action!r}"}
+        bridge = self.controller._bridge
+        if bridge is None or not getattr(self.controller, "robot_connected", False):
+            return {"ok": False, "error": "robot not connected"}
+        if not isinstance(bridge, CharBridge):
+            return {"ok": False, "error": "peripheral control requires CharBridge firmware"}
+        try:
+            bridge.send_raw(ch)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "peripherals": bridge.periph_state()}
+
+    def select_target(
+        self,
+        track_id: int | None,
+        *,
+        follow: bool = False,
+    ) -> dict[str, Any]:
+        """Pick which tracked cat to follow (None = auto largest box)."""
+        from catranger.web.controller import Mode
+
+        self._find_library_id = None
+        self._find_library_name = None
+        self._preferred_target_id = int(track_id) if track_id is not None else None
+        if self._ranger is not None:
+            self._ranger.set_preferred_target(self._preferred_target_id)
+        self.controller.follower.reset()
+        if follow and not self.controller.estopped:
+            self.controller.set_mode(Mode.FOLLOW)
+        return {
+            "ok": True,
+            "preferred_target_id": self._preferred_target_id,
+            "mode": self.controller.mode.value,
+        }
+
+    def list_library_cats(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        cats = self.cat_library.list_cats(limit=limit)
+        for row in cats:
+            row["thumb_jpeg_b64"] = None
+            if row.get("has_thumb"):
+                detail = self.cat_library.get(int(row["id"]))
+                if detail:
+                    row["thumb_jpeg_b64"] = detail.get("thumb_jpeg_b64")
+        return cats
+
+    def get_library_cat(self, cat_id: int) -> dict[str, Any] | None:
+        return self.cat_library.get(cat_id)
+
+    def rename_library_cat(self, cat_id: int, name: str) -> dict[str, Any]:
+        ok = self.cat_library.rename(cat_id, name)
+        return {"ok": ok}
+
+    def delete_library_cat(self, cat_id: int) -> dict[str, Any]:
+        ok = self.cat_library.delete(cat_id)
+        if ok:
+            self._tracker_to_library = {
+                tid: lid for tid, lid in self._tracker_to_library.items() if lid != int(cat_id)
+            }
+            if self._find_library_id == int(cat_id):
+                self._find_library_id = None
+                self._find_library_name = None
+        return {"ok": ok}
+
+    def find_library_cat(
+        self,
+        library_id: int,
+        *,
+        follow: bool = True,
+    ) -> dict[str, Any]:
+        """Drive/search to re-acquire a saved cat by appearance + last bearing."""
+        from catranger.web.controller import Mode
+
+        cat = self.cat_library.get(int(library_id))
+        if cat is None:
+            return {"ok": False, "error": f"unknown library cat id {library_id}"}
+
+        self._find_library_id = int(library_id)
+        self._find_library_name = str(cat["name"])
+        last_tid = cat.get("last_tracker_id")
+        bearing = cat.get("last_bearing_deg")
+
+        if last_tid is not None and self._ranger is not None:
+            known = set(self._ranger.tracker.known_ids)
+            if int(last_tid) in known or int(last_tid) in self._session_seen:
+                self._preferred_target_id = int(last_tid)
+                self._ranger.set_preferred_target(self._preferred_target_id)
+            else:
+                self._preferred_target_id = None
+                self._ranger.set_preferred_target(None)
+        else:
+            self._preferred_target_id = None
+            if self._ranger is not None:
+                self._ranger.set_preferred_target(None)
+
+        self.controller.follower.reset()
+        if bearing is not None:
+            self.controller.follower.set_search_bearing_deg(float(bearing))
+
+        if follow and not self.controller.estopped:
+            self.controller.set_mode(Mode.FOLLOW)
+
+        return {
+            "ok": True,
+            "find_library_id": self._find_library_id,
+            "find_library_name": self._find_library_name,
+            "mode": self.controller.mode.value,
+        }
+
+    def calibrate_with_sonar(
+        self,
+        *,
+        profile: str | None = None,
+        baseline_m: float | None = None,
+        duration_s: float | None = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Re-anchor fx/fy using live vision distance vs HC-SR04 (+ baseline offset)."""
+        cfg = self.cfg.get("sonar_calibration", {}) or {}
+        baseline = float(baseline_m if baseline_m is not None else cfg.get("baseline_m", 0.09))
+        duration = float(duration_s if duration_s is not None else cfg.get("duration_s", 5.0))
+        min_samples = int(cfg.get("min_samples", 8))
+        min_cm = int(cfg.get("min_sonar_cm", 25))
+        max_cm = int(cfg.get("max_sonar_cm", 180))
+        cam_profile = profile or self.camera_profile or "go2_1080p"
+
+        if not self.controller.robot_connected:
+            return _eval_err(
+                "robot_not_connected",
+                "robot not connected — no HC-SR04 ground truth",
+                "CharBridge/USB link is required for sonar calibration",
+                "connect the robot in Connections (usb @ 9600)",
+                status=409,
+            )
+        if self._ranger is None:
+            return _eval_err(
+                "perception_off",
+                "perception is not running",
+                "select a model and connect a camera first",
+                "Models tab → pick a detector; Connections → connect camera",
+                status=409,
+            )
+
+        def _read_sample() -> tuple[float | None, int | None]:
+            with self.controller._lock:
+                t = dict(self.controller.latest_telemetry)
+            pred = t.get("target_dist_m")
+            pred_m = float(pred) if isinstance(pred, (int, float)) and pred > 0 else None
+            gt = t.get("gt_cm")
+            sonar_cm = int(gt) if isinstance(gt, int) else None
+            if sonar_cm is None and isinstance(gt, float) and gt >= 0:
+                sonar_cm = int(gt)
+            return pred_m, sonar_cm
+
+        ratios, preds, gts = collect_sonar_ratios(
+            _read_sample,
+            duration_s=duration,
+            min_sonar_cm=min_cm,
+            max_sonar_cm=max_cm,
+            baseline_m=baseline,
+        )
+        if len(ratios) < min_samples:
+            return _eval_err(
+                "insufficient_samples",
+                f"only {len(ratios)} valid pairs (need {min_samples})",
+                "vision target or sonar was missing during the sample window",
+                "point the rig at a tracked cat or flat target; hold steady 25–180 cm from sonar",
+                status=409,
+            )
+
+        result = calibrate_camera_with_sonar(
+            cam_profile,
+            ratios,
+            baseline_m=baseline,
+            dry_run=dry_run,
+        )
+        if not result.ok:
+            body = result.as_dict()
+            body["code"] = "calibrate_failed"
+            body["status"] = 400
+            return body
+
+        out = result.as_dict()
+        out["pred_m_mean"] = round(float(np.mean(preds)), 3) if preds else None
+        out["gt_m_mean"] = round(float(np.mean(gts)), 3) if gts else None
+
+        if dry_run:
+            out["warning"] = "dry run — camera YAML unchanged"
+            return out
+
+        re = self.reanchor_camera(cam_profile)
+        out["calibrated"] = re.get("calibrated", True)
+        out["camera_profile"] = cam_profile
+        if re.get("warning"):
+            out["warning"] = re["warning"]
+        return out
+
+    @staticmethod
+    def _sonar_zone(cm: int | None) -> str | None:
+        if cm is None or cm < 0:
+            return None
+        if cm <= 40:
+            return "red"
+        if cm <= 80:
+            return "yellow"
+        if cm <= 120:
+            return "green"
+        if cm <= 160:
+            return "cyan"
+        return "blue"
 
     @property
     def stop_reason(self) -> StopReason:

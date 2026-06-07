@@ -68,7 +68,14 @@ function updateUI(t) {
   // primary strip
   $("dist").textContent = t.target_dist_m != null ? t.target_dist_m + " m" : "—";
   $("gt").textContent = t.gt_cm != null && t.gt_cm >= 0 ? (t.gt_cm / 100).toFixed(2) + " m" : "—";
-  $("target").textContent = t.target_id != null ? "id " + t.target_id : (t.n_cats ? t.n_cats + " seen" : "none");
+  $("target").textContent =
+    (t.target_ids && t.target_ids.length)
+      ? "id " + t.target_ids.join("/")
+      : t.target_id != null
+        ? "id " + t.target_id
+        : t.n_cats
+          ? t.n_cats + " seen"
+          : "none";
 
   // diagnostics
   $("fps").textContent = "FPS " + (t.fps != null ? t.fps : "—");
@@ -155,7 +162,10 @@ async function loadModels() {
   data.models.forEach((m) => {
     const li = document.createElement("li");
     if (m.id === data.active) li.classList.add("active");
-    li.innerHTML = `<div><b>${m.name}</b><div class="meta">${m.backend} · ${m.dataset || ""}</div></div>`;
+    const when = m.trained_at ? m.trained_at.replace(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2}).*/, "$1-$2-$3 $4:$5") : "";
+    const meta = [m.run_kind || m.backend, m.dataset || "", when].filter(Boolean).join(" · ");
+    const detail = m.summary || m.notes || "";
+    li.innerHTML = `<div><b>${m.name}</b><div class="meta">${meta}</div>${detail ? `<div class="meta">${detail}</div>` : ""}</div>`;
     const btn = document.createElement("button");
     btn.className = "btn"; btn.textContent = m.id === data.active ? "active" : "use";
     btn.disabled = m.id === data.active;

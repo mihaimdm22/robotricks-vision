@@ -23,10 +23,13 @@
  *   Motors      : Adafruit Motor Shield v1 -> M3 = LEFT, M4 = RIGHT
  *                 (if a turn comes out reversed, swap the 3 and 4 in AF_DCMotor below)
  *   HC-SR04     : TRIG = A1, ECHO = A2
- *   RGB LED     : R = 53, G = 51, B = 49  (common ANODE: LOW = on)
+ *   RGB LED     : R = 53, G = 51, B = 49
+ *                 Default build: COMMON CATHODE (HIGH = on). If your module is common
+ *                 anode (LOW = on), set RGB_COMMON_ANODE to 1 below.
  *   Buzzer      : pin 22 (fixed 2000 Hz)
  *   LCD         : I2C 16x2 @ 0x27
  *   Command link: Serial1 (TX1=D18, RX1=D19) -> HC-05 / HM-10 Bluetooth @ 9600 baud
+ *                 Serial (USB) @ 9600 — same single-char protocol when plugged in direct
  *
  * SINGLE-CHAR PROTOCOL (host -> Arduino, on Serial1)
  * -------------------------------------------------
@@ -38,7 +41,13 @@
  *   'g' = nudge back    ~400 ms then auto-stop      (manual mode)
  *   'h' = turn left  ~90 deg                         (manual mode / obstacle unblock)
  *   'j' = turn right ~90 deg                         (manual mode / obstacle unblock)
- * Arduino -> host (on Serial1):  "D <cm>\n" at ~10 Hz   (-1 = no echo / out of range)
+ *   'c' = toggle buzzer proximity beeps (metal-detector style)
+ *   'v' = toggle RGB distance indicator
+ *   'k' = toggle LCD distance display
+ *   '8' = enable all peripherals (buzzer + RGB + LCD)
+ *   '9' = quiet all peripherals
+ * Host -> Arduino line (USB or Serial1):  "I<id>\n"  e.g. I3/7  or I-  (LCD cat id)
+ * Arduino -> host:  "D <cm>\n" at ~10 Hz   (-1 = no echo / out of range)
  */
 
 #include <AFMotor.h>
@@ -49,7 +58,11 @@
 AF_DCMotor motorStanga(3);
 AF_DCMotor motorDreapta(4);
 
-// RGB (common anode: LOW = aprins)
+// RGB: most 4-pin modules are common CATHODE (HIGH = on). Set to 1 for common ANODE.
+#ifndef RGB_COMMON_ANODE
+#define RGB_COMMON_ANODE 0
+#endif
+
 #define RED 53
 #define GREEN 51
 #define BLUE 49
@@ -73,21 +86,51 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 #define TIMP_MERS_SCURT 400    // ms - "putin inainte/inapoi"
 #define LCD_INTERVAL   250     // ms - update LCD de 4 ori/sec
 #define D_INTERVAL     100     // ms - emit "D <cm>" to the host ~10x/sec  (ADDITIVE)
+#define RANGE_MAX_CM   200     // HC-SR04 working band (2 m)
+#define BUZZER_FAR_CM  180     // metal-detector beeps from here down
+#define SONAR_HOLD_MS  1200    // hold last valid cm for RGB/buzzer/LCD
 
 char mod = 0; // 0=idle, 'a'=autonom, 'b'=manual
 bool blocatDeObstacol = false;
+bool buzzerOn = true;
+bool rgbOn = true;
+bool lcdOn = true;
+char catIdStr[17] = "";       // from host "I3/7" or "I-"
 
 // Timing non-blocking
 unsigned long ultimaActualizareLCD = 0;
 unsigned long ultimulBip = 0;
 unsigned long ultimaTelemetrie = 0;    // ADDITIVE: last "D <cm>" emit
+unsigned long ultimaCitireValida = 0;
 long distantaCurenta = 999;
+long distantaValida = 999;
+
+// Last RGB mix (hold during no-echo so the LED does not flash white/off).
+bool rgbLastR = false;
+bool rgbLastG = false;
+bool rgbLastB = true;
 
 // ---------- FUNCTII RGB ----------
 void setRGB(bool r, bool g, bool b) {
+#if RGB_COMMON_ANODE
   digitalWrite(RED, r ? LOW : HIGH);
   digitalWrite(GREEN, g ? LOW : HIGH);
   digitalWrite(BLUE, b ? LOW : HIGH);
+#else
+  digitalWrite(RED, r ? HIGH : LOW);
+  digitalWrite(GREEN, g ? HIGH : LOW);
+  digitalWrite(BLUE, b ? HIGH : LOW);
+#endif
+}
+
+void setRGBOff() {
+#if RGB_COMMON_ANODE
+  setRGB(0, 0, 0);
+#else
+  digitalWrite(RED, LOW);
+  digitalWrite(GREEN, LOW);
+  digitalWrite(BLUE, LOW);
+#endif
 }
 
 // ---------- SENZOR ----------
@@ -97,9 +140,24 @@ long getDistanta() {
   digitalWrite(TRIG, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG, LOW);
-  long durata = pulseIn(ECHO, HIGH, 30000); // timeout 30ms
+  long durata = pulseIn(ECHO, HIGH, 25000); // ~4 m max; 2 m needs ~12 ms
   if (durata == 0) return 999; // nimic detectat
-  return durata * 0.034 / 2;
+  long cm = (long)(durata * 0.034 / 2);
+  if (cm > RANGE_MAX_CM) return 999;
+  return cm;
+}
+
+// Hold last valid reading so RGB/buzzer/LCD don't flicker on occasional no-echo.
+long distantaPentruFeedback(long d) {
+  if (d >= 999 || d < 0) {
+    if (millis() - ultimaCitireValida < SONAR_HOLD_MS && distantaValida < 999) {
+      return distantaValida;
+    }
+    return 999;
+  }
+  distantaValida = d;
+  ultimaCitireValida = millis();
+  return d;
 }
 
 // ---------- TELEMETRIE host (ADDITIVE) ----------
@@ -115,6 +173,9 @@ void trimiteTelemetrie() {
     long out = (distantaCurenta >= 999) ? -1 : distantaCurenta;
     Serial1.print("D ");
     Serial1.println(out);
+    // USB host (CharBridge over /dev/cu.usbserial-*) reads Serial, not Serial1.
+    Serial.print("D ");
+    Serial.println(out);
   }
 }
 
@@ -156,58 +217,93 @@ void rotesteDreapta90() {
   stopMotoare();
 }
 
-// ---------- RGB pe 5 intervale ----------
+// ---------- RGB pe 5 intervale (0–200 cm) ----------
 void culoareDistanta(long d) {
-  if (d <= 30) {
-    setRGB(1, 0, 0);        // rosu - foarte aproape
-  } else if (d <= 60) {
-    setRGB(1, 1, 0);        // galben
-  } else if (d <= 90) {
-    setRGB(0, 1, 0);        // verde
-  } else if (d <= 120) {
-    setRGB(0, 1, 1);        // cyan
-  } else {
-    setRGB(0, 0, 1);        // albastru - departe
+  if (d >= 999) {
+    setRGB(rgbLastR, rgbLastG, rgbLastB);
+    return;
   }
+  bool r = false, g = false, b = false;
+  if (d <= 40) {
+    r = true;                               // rosu - foarte aproape
+  } else if (d <= 80) {
+    r = g = true;                           // galben
+  } else if (d <= 120) {
+    g = true;                               // verde
+  } else if (d <= 160) {
+    g = b = true;                           // cyan
+  } else {
+    b = true;                               // albastru - departe (<=200)
+  }
+  rgbLastR = r;
+  rgbLastG = g;
+  rgbLastB = b;
+  setRGB(r, g, b);
 }
 
-// ---------- BUZZER tip detector de metale ----------
+// ---------- BUZZER tip detector de metale (2 m band) ----------
 void bipDetector(long d) {
-  if (d > 60) {
+  if (d >= 999 || d > BUZZER_FAR_CM) {
     noTone(BUZZER);
     return;
   }
-  int interval = map(constrain(d, PRAG_OBSTACOL, 60), 60, PRAG_OBSTACOL, 1000, 80);
+  int interval = map(constrain(d, PRAG_OBSTACOL, BUZZER_FAR_CM), BUZZER_FAR_CM, PRAG_OBSTACOL, 900, 70);
 
   if (millis() - ultimulBip >= (unsigned long)interval) {
     ultimulBip = millis();
-    tone(BUZZER, FRECV_BIP, 50);
+    tone(BUZZER, FRECV_BIP, 90);
   }
 }
 
 // ---------- LCD update throttled ----------
 void actualizeazaLCD(long d) {
+  if (!lcdOn) return;
   if (millis() - ultimaActualizareLCD >= LCD_INTERVAL) {
     ultimaActualizareLCD = millis();
     lcd.setCursor(0, 0);
     if (blocatDeObstacol) {
       lcd.print("OBSTACOL! h/j   ");
+    } else if (catIdStr[0] != '\0' && catIdStr[0] != '-') {
+      lcd.print("Cat id:");
+      lcd.print(catIdStr);
+    } else if (mod == 'b') {
+      lcd.print("Manual 0-200cm ");
+    } else if (mod == 'a') {
+      lcd.print("Auto 0-200cm   ");
     } else {
-      lcd.print("Distanta:       ");
+      lcd.print("Dist 0-200cm   ");
     }
     lcd.setCursor(0, 1);
-    lcd.print(d);
-    lcd.print(" cm        ");
+    if (d >= 999) {
+      lcd.print("--- / 200cm   ");
+    } else {
+      lcd.print(d);
+      lcd.print(" cm / 200cm  ");
+    }
   }
+}
+
+// ---------- Peripherals (RGB + buzzer + LCD) from ultrasonic reading ----------
+void feedbackPeriferice(long d) {
+  if (rgbOn) {
+    culoareDistanta(d);
+  } else {
+    setRGBOff();
+  }
+  if (buzzerOn) {
+    bipDetector(d);
+  } else {
+    noTone(BUZZER);
+  }
+  actualizeazaLCD(d);
 }
 
 // ---------- MOD AUTONOM ----------
 void ruleazaAutonom() {
   distantaCurenta = getDistanta();
+  long dFeed = distantaPentruFeedback(distantaCurenta);
 
-  culoareDistanta(distantaCurenta);
-  bipDetector(distantaCurenta);
-  actualizeazaLCD(distantaCurenta);
+  feedbackPeriferice(dFeed);
 
   if (distantaCurenta <= PRAG_OBSTACOL) {
     blocatDeObstacol = true;
@@ -227,7 +323,7 @@ void setup() {
   pinMode(RED, OUTPUT);
   pinMode(GREEN, OUTPUT);
   pinMode(BLUE, OUTPUT);
-  setRGB(0, 0, 0);
+  setRGBOff();
 
   pinMode(BUZZER, OUTPUT);
   pinMode(TRIG, OUTPUT);
@@ -245,72 +341,140 @@ void setup() {
   mod = 'b';
 }
 
-void loop() {
-  if (Serial1.available()) {
-    char c = Serial1.read();
-    Serial.print("Comanda: ");      // USB debug only
-    Serial.println(c);
+// Shared by Serial (USB) and Serial1 (Bluetooth) — same single-char protocol.
+void proceseazaComanda(char c) {
+  Serial.print("Comanda: ");      // USB debug echo
+  Serial.println(c);
 
-    switch (c) {
-      case 'a': // PORNESTE MOD AUTONOM
-        mod = 'a';
-        blocatDeObstacol = false;
-        Serial.println("Mod autonom PORNIT");   // ADDITIVE: ack on USB, not Serial1
-        break;
+  switch (c) {
+    case 'a': // PORNESTE MOD AUTONOM
+      mod = 'a';
+      blocatDeObstacol = false;
+      Serial.println("Mod autonom PORNIT");
+      break;
 
-      case 'b': // MOD MANUAL
-        mod = 'b';
-        blocatDeObstacol = false;
-        stopMotoare();
-        noTone(BUZZER);
-        setRGB(0, 0, 0);
+    case 'b': // MOD MANUAL
+      mod = 'b';
+      blocatDeObstacol = false;
+      stopMotoare();
+      if (lcdOn) {
         lcd.clear();
         lcd.print("Mod manual");
-        Serial.println("Mod manual");           // ADDITIVE: ack on USB, not Serial1
-        break;
+      }
+      Serial.println("Mod manual");
+      break;
 
-      case 'f': // putin inainte
-        if (mod == 'b') {
-          inainte(VITEZA_NORMALA);
-          delay(TIMP_MERS_SCURT);
-          stopMotoare();
-          Serial.println("Inainte");            // ADDITIVE: ack on USB, not Serial1
-        }
-        break;
+    case 'c': // toggle buzzer proximity beeps
+      buzzerOn = !buzzerOn;
+      if (!buzzerOn) noTone(BUZZER);
+      Serial.print("Buzzer ");
+      Serial.println(buzzerOn ? "ON" : "OFF");
+      break;
 
-      case 'g': // putin inapoi
-        if (mod == 'b') {
-          inapoi(VITEZA_NORMALA);
-          delay(TIMP_MERS_SCURT);
-          stopMotoare();
-          Serial.println("Inapoi");             // ADDITIVE: ack on USB, not Serial1
-        }
-        break;
+    case 'v': // toggle RGB distance colors
+      rgbOn = !rgbOn;
+      if (!rgbOn) setRGBOff();
+      Serial.print("RGB ");
+      Serial.println(rgbOn ? "ON" : "OFF");
+      break;
 
-      case 'h': // stanga 90 (manual SAU deblocare obstacol in autonom)
-        if (mod == 'b' || (mod == 'a' && blocatDeObstacol)) {
-          rotesteStanga90();
-          blocatDeObstacol = false;
-          Serial.println("Stanga 90");          // ADDITIVE: ack on USB, not Serial1
-        }
-        break;
+    case 'k': // toggle LCD distance display
+      lcdOn = !lcdOn;
+      if (!lcdOn) {
+        lcd.clear();
+      } else if (mod == 'b') {
+        lcd.print("Mod manual");
+      }
+      Serial.print("LCD ");
+      Serial.println(lcdOn ? "ON" : "OFF");
+      break;
 
-      case 'j': // dreapta 90 (manual SAU deblocare obstacol in autonom)
-        if (mod == 'b' || (mod == 'a' && blocatDeObstacol)) {
-          rotesteDreapta90();
-          blocatDeObstacol = false;
-          Serial.println("Dreapta 90");         // ADDITIVE: ack on USB, not Serial1
-        }
-        break;
-    }
+    case '8': // enable all peripherals
+      buzzerOn = rgbOn = lcdOn = true;
+      Serial.println("Peripherals ALL ON");
+      break;
+
+    case '9': // quiet all peripherals
+      buzzerOn = rgbOn = lcdOn = false;
+      noTone(BUZZER);
+      setRGBOff();
+      lcd.clear();
+      Serial.println("Peripherals ALL OFF");
+      break;
+
+    case 'f': // putin inainte
+      if (mod == 'b') {
+        inainte(VITEZA_NORMALA);
+        delay(TIMP_MERS_SCURT);
+        stopMotoare();
+        Serial.println("Inainte");
+      }
+      break;
+
+    case 'g': // putin inapoi
+      if (mod == 'b') {
+        inapoi(VITEZA_NORMALA);
+        delay(TIMP_MERS_SCURT);
+        stopMotoare();
+        Serial.println("Inapoi");
+      }
+      break;
+
+    case 'h': // stanga 90 (manual SAU deblocare obstacol in autonom)
+      if (mod == 'b' || (mod == 'a' && blocatDeObstacol)) {
+        rotesteStanga90();
+        blocatDeObstacol = false;
+        Serial.println("Stanga 90");
+      }
+      break;
+
+    case 'j': // dreapta 90 (manual SAU deblocare obstacol in autonom)
+      if (mod == 'b' || (mod == 'a' && blocatDeObstacol)) {
+        rotesteDreapta90();
+        blocatDeObstacol = false;
+        Serial.println("Dreapta 90");
+      }
+      break;
   }
+}
+
+// Host sends "I3/7\n" or "I-\n" to show tracked cat id on LCD line 0.
+void proceseazaIdHost(Stream &s) {
+  char buf[17];
+  uint8_t i = 0;
+  unsigned long deadline = millis() + 50;
+  while (i < 16 && millis() < deadline) {
+    if (!s.available()) continue;
+    char x = (char)s.read();
+    if (x == '\n' || x == '\r') break;
+    buf[i++] = x;
+  }
+  buf[i] = '\0';
+  strncpy(catIdStr, buf, 16);
+  catIdStr[16] = '\0';
+}
+
+void pollStream(Stream &s) {
+  while (s.available()) {
+    char c = (char)s.read();
+    if (c == 'I') {
+      proceseazaIdHost(s);
+      continue;
+    }
+    proceseazaComanda(c);
+  }
+}
+
+void loop() {
+  pollStream(Serial1);
+  pollStream(Serial);
 
   if (mod == 'a') {
     ruleazaAutonom();
+    trimiteTelemetrie();
+  } else {
+    trimiteTelemetrie();
+    long dFeed = distantaPentruFeedback(distantaCurenta);
+    feedbackPeriferice(dFeed);
   }
-
-  // ADDITIVE: stream ground-truth distance to the host (~10 Hz). In manual/idle this
-  // also refreshes the reading on the timer, so the loop never blocks on pulseIn()
-  // more than once per D_INTERVAL.
-  trimiteTelemetrie();
 }

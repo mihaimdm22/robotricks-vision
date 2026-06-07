@@ -14,6 +14,7 @@ where frames come from.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -93,6 +94,9 @@ def frame_source(
 
 
 def _from_capture(target, stride, max_frames, backend=None):
+    if backend is None and isinstance(target, str) and is_stream(target):
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+        backend = cv2.CAP_FFMPEG
     cap = cv2.VideoCapture(target, backend) if backend is not None else cv2.VideoCapture(target)
     if not cap.isOpened():
         raise RuntimeError(f"could not open capture: {target}")

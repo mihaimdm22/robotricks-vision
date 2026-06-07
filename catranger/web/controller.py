@@ -93,6 +93,7 @@ class ManualVector:
 class _FollowerLike(Protocol):
     def step(self, result: FrameResult) -> Command: ...
     def reset(self) -> None: ...
+    def set_search_bearing_deg(self, bearing_deg: float | None) -> None: ...
 
 
 class _BridgeLike(Protocol):
@@ -222,6 +223,11 @@ class RobotController:
         self._safe_send(cmd)
         self._last_gt = self._safe_read_gt()
         target = result.target if result is not None else None
+        known_ids = list(result.target_known_ids) if result is not None else []
+        self._sync_lcd_target(
+            target.track_id if target is not None else None,
+            known_ids,
+        )
         with self._lock:
             self.latest_telemetry = {
                 "frame_index": frame_index,
@@ -235,6 +241,7 @@ class RobotController:
                 "n_cats": len(result.observations) if result is not None else 0,
                 "fps": round(result.fps, 1) if result is not None else None,
                 "target_id": target.track_id if target is not None else None,
+                "target_ids": known_ids,
                 "target_dist_m": (
                     round(target.distance.meters, 2)
                     if target is not None and target.distance is not None
@@ -276,6 +283,18 @@ class RobotController:
             return bridge.read_distance_cm()
         except Exception:
             return None
+
+    def _sync_lcd_target(self, target_id: int | None, known_ids: list[int]) -> None:
+        bridge = self._bridge
+        if bridge is None:
+            return
+        sync = getattr(bridge, "sync_target", None)
+        if sync is None:
+            return
+        try:
+            sync(target_id, known_ids or None)
+        except Exception:
+            pass
 
     def _degrade_bridge(self) -> None:
         """A failed link must not crash the loop: fall back to a DummyBridge and

@@ -78,6 +78,12 @@ class Follower:
         self._last_bearing_rad = 0.0  # last observed bearing, for SEARCH sweep
         self._coast_cmd = Command(state="SEARCH")
 
+    def set_search_bearing_deg(self, bearing_deg: float | None) -> None:
+        """Bias SEARCH rotation toward a remembered bearing (e.g. library re-acquire)."""
+        if bearing_deg is None:
+            return
+        self._last_bearing_rad = math.radians(float(bearing_deg))
+
     def _smooth(self, channel: str, raw: float) -> float:
         prev = self.u_prev.get(channel, 0.0)
         u = _deadband(raw, self.deadband_rot if channel == "rotation" else self.deadband_dist)
@@ -128,9 +134,11 @@ class Follower:
         z = float(target.distance.meters)
 
         # target-lock hysteresis / acquire counter
+        known = set(result.target_known_ids or [])
         if self.target_id != det.track_id:
+            if self.target_id is None or det.track_id not in known:
+                self._acquire_count = 0
             self.target_id = det.track_id
-            self._acquire_count = 0
 
         # ---------------- SAFE: too close -> back off / stop ----------------
         if z < self.safe_distance:

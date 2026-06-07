@@ -39,16 +39,42 @@ class CatTracker:
         self.detector = detector
         self.tracker_name = tracker_name
         self.lock_hysteresis = max(1, int(lock_hysteresis))
+        self.preferred_id: int | None = None
+        self.locked_id: int | None = None
+        self.known_ids: set[int] = set()
+        self._challenger_id: int | None = None
+        self._challenger_count: int = 0
+        self._last_target: Detection | None = None
+        self._coast_frames: int = 0
         self.reset()
+
+    def set_preferred_id(self, track_id: int | None) -> None:
+        """Operator-selected cat to follow; None = auto (largest box)."""
+        self.preferred_id = int(track_id) if track_id is not None else None
+        if self.preferred_id is not None:
+            self.locked_id = self.preferred_id
+            self._challenger_id = None
+            self._challenger_count = 0
+            self._coast_frames = 0
 
     def reset(self) -> None:
         """Clear all lock/coast state (call between independent clips)."""
-        self.locked_id: int | None = None
-        self._challenger_id: int | None = None
-        self._challenger_count: int = 0
+        self.locked_id = None
+        self.known_ids = set()
+        self._challenger_id = None
+        self._challenger_count = 0
         # last Detection we returned as the target, for coasting across a missed frame
-        self._last_target: Detection | None = None
-        self._coast_frames: int = 0
+        self._last_target = None
+        self._coast_frames = 0
+        # keep preferred_id across tracker.reset() — operator intent survives clip gaps
+
+    def _note_id(self, track_id: int | None) -> None:
+        if track_id is not None:
+            self.known_ids.add(int(track_id))
+
+    def _clear_identity(self) -> None:
+        """Drop accumulated tracker ids when the target is fully lost."""
+        self.known_ids.clear()
 
     # ---- per-frame ----
     def update(self, frame_bgr: np.ndarray) -> list[Detection]:
@@ -71,11 +97,34 @@ class CatTracker:
             self.locked_id = None
             self._challenger_id = None
             self._challenger_count = 0
+            self._clear_identity()
             return None
 
         # largest box = the natural target candidate this frame
         best = max(dets, key=lambda d: d.area)
         by_id = {d.track_id: d for d in dets if d.track_id is not None}
+
+        if self.preferred_id is not None:
+            pref = by_id.get(self.preferred_id)
+            if pref is not None:
+                self.locked_id = self.preferred_id
+                self._note_id(self.preferred_id)
+                self._challenger_id = None
+                self._challenger_count = 0
+                self._coast_frames = 0
+                self._last_target = pref
+                return pref
+            if (
+                self._last_target is not None
+                and self._last_target.track_id == self.preferred_id
+                and self._coast_frames == 0
+            ):
+                self._coast_frames = 1
+                return self._last_target
+            self._coast_frames = 0
+            self._last_target = None
+            self.locked_id = self.preferred_id
+            return None
 
         # no usable ids (detection-only / tracker warmup): just follow the largest box.
         if best.track_id is None:
@@ -91,7 +140,9 @@ class CatTracker:
 
         if self.locked_id is None:
             # acquire: lock immediately onto the best box's id.
+            self._clear_identity()
             self.locked_id = best.track_id
+            self._note_id(best.track_id)
             self._challenger_id = None
             self._challenger_count = 0
             self._coast_frames = 0
@@ -109,7 +160,9 @@ class CatTracker:
                 self._coast_frames = 1
                 return self._last_target
             # coast budget spent: hand the lock to whatever is best now.
+            self._note_id(self.locked_id)
             self.locked_id = best.track_id
+            self._note_id(best.track_id)
             self._challenger_id = None
             self._challenger_count = 0
             self._coast_frames = 0
@@ -148,7 +201,9 @@ class CatTracker:
             self._challenger_count = 1
 
     def _commit_challenger(self, det: Detection) -> None:
+        self._note_id(self.locked_id)
         self.locked_id = det.track_id
+        self._note_id(det.track_id)
         self._challenger_id = None
         self._challenger_count = 0
         self._coast_frames = 0

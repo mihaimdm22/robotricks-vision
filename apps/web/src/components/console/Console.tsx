@@ -16,19 +16,31 @@ import { StatusBanner } from "./StatusBanner";
 import { VideoPane } from "./VideoPane";
 import { TelemetryStrip } from "./TelemetryStrip";
 import { DrivePad } from "./DrivePad";
+import { PeripheralsPanel } from "./PeripheralsPanel";
+import { CatPickerPanel } from "./CatPickerPanel";
+import { CatLibraryTab } from "./CatLibraryTab";
 import { ModelsTab } from "./ModelsTab";
 import { ConnectionsTab } from "./ConnectionsTab";
 import { CVTab } from "./CVTab";
+import { ControlTip, HelpProvider } from "./help";
+import type { HelpId } from "@/lib/console-help";
 
-type Tab = "control" | "models" | "connections" | "cv";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "control", label: "Control" },
-  { id: "models", label: "Models" },
-  { id: "connections", label: "Connections" },
-  { id: "cv", label: "CV" },
+type Tab = "control" | "cats" | "models" | "connections" | "cv";
+const TABS: { id: Tab; label: string; helpId: HelpId }[] = [
+  { id: "control", label: "Control", helpId: "tab.control" },
+  { id: "cats", label: "Cats", helpId: "tab.cats" },
+  { id: "models", label: "Models", helpId: "tab.models" },
+  { id: "connections", label: "Connections", helpId: "tab.connections" },
+  { id: "cv", label: "CV", helpId: "tab.cv" },
 ];
 
 const MODES = ["IDLE", "MANUAL", "FOLLOW"] as const;
+
+const MODE_HELP: Record<(typeof MODES)[number], HelpId> = {
+  IDLE: "mode.idle",
+  MANUAL: "mode.manual",
+  FOLLOW: "mode.follow",
+};
 
 export function Console() {
   // The effective backend URL doubles as a remount key: when the operator saves a
@@ -68,7 +80,8 @@ function ConsoleBody() {
   const estopped = !!telemetry?.estop;
 
   return (
-    <div className="min-h-screen bg-bg text-fg">
+    <HelpProvider>
+    <div className="min-h-screen bg-bg text-fg console-page">
       <SafetyHeader telemetry={telemetry} link={link} />
       <StatusBanner telemetry={telemetry} link={link} />
 
@@ -104,17 +117,18 @@ function ConsoleBody() {
         </section>
 
         <section className="op-surface flex flex-col p-4">
-          <nav className="mb-4 flex gap-1 border-b border-line">
+          <nav className="mb-4 flex flex-wrap gap-1 border-b border-line">
             {TABS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className="op-btn rounded-b-none border-b-0"
-                data-active={tab === t.id}
-                onClick={() => setTab(t.id)}
-              >
-                {t.label}
-              </button>
+              <ControlTip key={t.id} helpId={t.helpId}>
+                <button
+                  type="button"
+                  className="op-btn shrink-0 rounded-b-none border-b-0 px-2 text-xs sm:px-3 sm:text-sm"
+                  data-active={tab === t.id}
+                  onClick={() => setTab(t.id)}
+                >
+                  {t.label}
+                </button>
+              </ControlTip>
             ))}
           </nav>
 
@@ -122,15 +136,16 @@ function ConsoleBody() {
             <div>
               <div className="mb-4 flex gap-2">
                 {MODES.map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    className="op-btn flex-1"
-                    data-active={mode === m && !estopped}
-                    onClick={() => send({ type: "mode", mode: m })}
-                  >
-                    {m}
-                  </button>
+                  <ControlTip key={m} helpId={MODE_HELP[m]}>
+                    <button
+                      type="button"
+                      className="op-btn flex-1"
+                      data-active={mode === m && !estopped}
+                      onClick={() => send({ type: "mode", mode: m })}
+                    >
+                      {m}
+                    </button>
+                  </ControlTip>
                 ))}
               </div>
               <DrivePad
@@ -138,7 +153,23 @@ function ConsoleBody() {
                 send={send}
                 onRequestControl={() => send({ type: "request_control" })}
               />
+              <CatPickerPanel
+                telemetry={telemetry}
+                send={send}
+                estopped={estopped}
+                onOpenLibrary={() => setTab("cats")}
+              />
+              <PeripheralsPanel
+                telemetry={telemetry}
+                send={send}
+                controllable={
+                  !!telemetry?.robot_connected && telemetry?.peripherals != null
+                }
+              />
             </div>
+          )}
+          {tab === "cats" && (
+            <CatLibraryTab telemetry={telemetry} send={send} estopped={estopped} />
           )}
           {tab === "models" && <ModelsTab />}
           {tab === "connections" && <ConnectionsTab />}
@@ -146,5 +177,6 @@ function ConsoleBody() {
         </section>
       </main>
     </div>
+    </HelpProvider>
   );
 }
