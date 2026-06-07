@@ -46,8 +46,8 @@ class CameraModel:
         self._map_y = (y * scale * self.fy + self.cy).astype(np.float32)
 
     def undistort(self, img_bgr: np.ndarray) -> np.ndarray:
-        """Rectify a frame. No-op if dist_model == 'none'."""
-        if self.cfg.dist_model == "none":
+        """Rectify a frame. No-op if dist_model == 'none' or intrinsics are still placeholders."""
+        if self.cfg.dist_model == "none" or self.cfg.needs_calibration:
             return img_bgr
         if cv2 is None:
             return img_bgr

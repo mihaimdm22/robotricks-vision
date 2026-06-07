@@ -27,6 +27,24 @@ def test_no_detections_flag():
     assert "no_detections" in o["global_flags"]
 
 
+def test_target_observation_overrides_largest_box():
+    small = _obs(0, 0, 10, 10, tid=1)
+    big = _obs(0, 0, 80, 80, tid=2)
+    res = FrameResult(
+        frame_index=3,
+        observations=[small, big],
+        width=100,
+        height=100,
+        target_observation=small,
+        target_known_ids=[1, 7],
+    )
+    o = build_overlay(res, 3)
+    by_id = {d["track_id"]: d for d in o["dets"]}
+    assert by_id[1]["is_target"] is True
+    assert by_id[2]["is_target"] is False
+    assert by_id[1]["known_track_ids"] == [1, 7]
+
+
 def test_normalizes_coords_and_marks_largest_as_target():
     small = _obs(0, 0, 10, 10, tid=1)
     big = _obs(0, 0, 80, 80, tid=2)  # larger area -> target

@@ -327,9 +327,15 @@ class RobotRuntime:
         sample to the history store (model estimate vs HC-SR04 truth over time)."""
         est = lo = hi = None
         target_id = None
+        target_ids: list[int] = []
         tgt = result.target
         if tgt is not None:
             target_id = tgt.track_id
+            target_ids = list(result.target_known_ids or [])
+            if target_id is not None and target_id not in target_ids:
+                target_ids = [target_id, *target_ids]
+            elif not target_ids and target_id is not None:
+                target_ids = [target_id]
             d = tgt.distance
             if d is not None and np.isfinite(d.meters):
                 est, lo, hi = round(d.meters, 3), round(d.lo, 3), round(d.hi, 3)
@@ -349,6 +355,7 @@ class RobotRuntime:
             hi=hi,
             gt_cm=gt_cm,
             target_id=target_id,
+            target_ids=target_ids or None,
             mode=self.controller.mode.value,
         )
 
@@ -418,6 +425,7 @@ class RobotRuntime:
                 "camera": self.camera_spec,
                 "camera_profile": self.camera_profile,
                 "camera_calibrated": self.camera_calibrated,
+                "ptz_available": self._tapo is not None,
                 "robot": self.robot_desc,
                 "frame_age_ms": round(age_ms, 1) if age_ms is not None else None,
                 "target_dist_lo": self._last_dist[1],
@@ -447,14 +455,12 @@ class RobotRuntime:
             "camera": self.camera_spec,
             "camera_profile": self.camera_profile,
             "camera_calibrated": self.camera_calibrated,
+            "ptz_available": self._tapo is not None,
             "model": self.active_model.id,
             "model_status": self.model_status,
             "model_error": self.model_error,
             "perception_available": self.perception_available,
-            "models": [
-                {"id": m.id, "name": m.name, "backend": m.backend, "dataset": m.dataset}
-                for m in self.registry.list()
-            ],
+            "models": [m.to_public_dict() for m in self.registry.list()],
         }
 
     # ------------------------------------------------------------- devices
@@ -483,19 +489,32 @@ class RobotRuntime:
             "label": self.camera_spec,
             "warning": self._diagnose_camera(spec) if fell_back else None,
         }
-        # Optionally re-anchor distance intrinsics to a camera profile in the same
-        # call (the Connections-tab dropdown). Without this, Tapo frames keep the
-        # Go2 intrinsics and every distance is wrong by a constant (frozen rubric).
-        if camera:
-            re = self.reanchor_camera(camera)
+        # RTSP streams are the Tapo C211 in this project — the default go2_1080p profile
+        # disables pan/tilt and uses the wrong intrinsics. Auto-select tapo_c211 unless
+        # the operator explicitly picked another profile for a non-RTSP source.
+        profile = camera
+        profile_note: str | None = None
+        if spec.lower().startswith("rtsp://") and profile in (None, "go2_1080p"):
+            profile = "tapo_c211"
+            profile_note = (
+                "RTSP detected — switched camera profile to tapo_c211 "
+                "(required for pan/tilt and Tapo distance intrinsics)"
+            )
+        if profile:
+            re = self.reanchor_camera(profile)
             result["camera_profile"] = re.get("camera_profile")
             result["calibrated"] = re.get("calibrated")
             if re.get("warning") and not result["warning"]:
                 result["warning"] = re.get("warning")
+            elif profile_note and not result["warning"]:
+                result["warning"] = profile_note
+            elif profile_note and result["warning"]:
+                result["warning"] = f"{profile_note}; {result['warning']}"
         else:
             result["camera_profile"] = self.camera_profile
             result["calibrated"] = self.camera_calibrated
-        self._set_tapo_handle(spec, self.camera_profile)
+        self._set_tapo_handle(spec)
+        result["ptz_available"] = self._tapo is not None
         return result
 
     def _diagnose_camera(self, spec: str) -> str:
@@ -526,20 +545,23 @@ class RobotRuntime:
             "the stream path (using synthetic for now)"
         )
 
-    def _set_tapo_handle(self, spec: str, profile: str | None) -> None:
-        """Build (or clear) the TapoCamera PTZ handle. PTZ is only available when the
-        active camera is a Tapo rtsp source — the runtime otherwise opens generic
-        OpenCV and has no pan/tilt handle (Eng/DX review)."""
-        self._tapo = None
-        if profile == "tapo_c211" and spec.lower().startswith("rtsp://"):
-            try:
-                from catranger.hw.tapo import TapoCamera
+    def _set_tapo_handle(self, spec: str) -> None:
+        """Build (or clear) the TapoCamera PTZ handle from an RTSP URL with credentials.
 
-                host, user, pwd, stream = _parse_rtsp(spec)
-                if host:
-                    self._tapo = TapoCamera(host, user, pwd, stream)
-            except Exception:
-                self._tapo = None
+        Pan/tilt uses ONVIF on the same host — independent of the intrinsics profile
+        dropdown, so a mistaken go2_1080p selection does not disable the motor.
+        """
+        self._tapo = None
+        if not spec.lower().startswith("rtsp://"):
+            return
+        try:
+            from catranger.hw.tapo import TapoCamera
+
+            host, user, pwd, stream = _parse_rtsp(spec)
+            if host and user and pwd:
+                self._tapo = TapoCamera(host, user, pwd, stream)
+        except Exception:
+            self._tapo = None
 
     # ------------------------------------------------------------------- PTZ
     def ptz_move(self, pan: float, tilt: float) -> dict:
@@ -564,7 +586,8 @@ class RobotRuntime:
                     "ptz_failed",
                     "pan/tilt command failed",
                     str(exc),
-                    "pip install pytapo and set the Tapo Camera Account (not the cloud login)",
+                    "enable Third-Party Compatibility (Tapo app -> Me -> Tapo Lab), "
+                    "set a Camera Account, and run uv sync --extra hw",
                 )
         self._last_ptz_ts = now
         return {"ok": True}
@@ -586,7 +609,7 @@ class RobotRuntime:
                     "ptz_failed",
                     f"could not recall preset {name!r}",
                     str(exc),
-                    "create the preset in the Tapo app, or check pytapo + Camera Account",
+                    "create the preset in the Tapo app, or check ONVIF + Camera Account",
                 )
         return {"ok": True}
 
@@ -970,8 +993,25 @@ class RobotRuntime:
             )
         model_id = str(params.get("model_id") or "cats-finetuned")
         name = str(params.get("name") or "Fine-tuned cats")
+        winner = promote_mod.read_winner()
+        promote_kw: dict[str, Any] = {"model_id": model_id, "name": name}
+        if run_dir:
+            stamp = run_dir.rsplit("/", 1)[-1]
+            promote_kw["trained_at"] = stamp
+            if "-" in stamp:
+                promote_kw["run_kind"] = stamp.rsplit("-", 1)[-1]
+        if winner:
+            if winner.get("metric") is not None:
+                promote_kw["metric"] = winner.get("metric")
+            if winner.get("metric_key"):
+                promote_kw["metric_key"] = winner.get("metric_key")
+            if winner.get("duration_s") is not None:
+                promote_kw["duration_s"] = winner.get("duration_s")
+            if winner.get("summary"):
+                promote_kw["summary"] = winner.get("summary")
+            promote_kw.setdefault("run_kind", "autoresearch")
         try:
-            summary = promote_mod.promote_weights(weights, model_id=model_id, name=name)
+            summary = promote_mod.promote_weights(weights, **promote_kw)
         except Exception as exc:
             return _eval_err(
                 "promote_failed",

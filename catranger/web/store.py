@@ -8,6 +8,7 @@ lock (the control thread writes; request-handler threads read).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -22,12 +23,13 @@ CREATE TABLE IF NOT EXISTS distance_samples (
     hi        REAL,               -- CI upper bound (m)
     gt_cm     REAL,               -- HC-SR04 ground truth (cm), NULL if none
     target_id INTEGER,
+    target_ids TEXT,
     mode      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_distance_ts ON distance_samples (ts);
 """
 
-_COLS = ("ts", "est_m", "lo", "hi", "gt_cm", "target_id", "mode")
+_COLS = ("ts", "est_m", "lo", "hi", "gt_cm", "target_id", "target_ids", "mode")
 
 
 class DistanceStore:
@@ -42,6 +44,7 @@ class DistanceStore:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            self._migrate()
             # WAL keeps readers from blocking the single writer (no-op on :memory:);
             # synchronous=NORMAL is safe under WAL and avoids an fsync per commit,
             # so the ~4 Hz write from the control thread can't stall the loop.
@@ -52,6 +55,11 @@ class DistanceStore:
                 pass
             self._conn.commit()
 
+    def _migrate(self) -> None:
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(distance_samples)")}
+        if "target_ids" not in cols:
+            self._conn.execute("ALTER TABLE distance_samples ADD COLUMN target_ids TEXT")
+
     def record(
         self,
         ts: float,
@@ -61,12 +69,15 @@ class DistanceStore:
         gt_cm: float | None,
         target_id: int | None,
         mode: str | None,
+        target_ids: list[int] | None = None,
     ) -> None:
+        ids_json = json.dumps(target_ids) if target_ids else None
         with self._lock:
             self._conn.execute(
-                "INSERT INTO distance_samples (ts, est_m, lo, hi, gt_cm, target_id, mode) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (ts, est_m, lo, hi, gt_cm, target_id, mode),
+                "INSERT INTO distance_samples "
+                "(ts, est_m, lo, hi, gt_cm, target_id, target_ids, mode) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (ts, est_m, lo, hi, gt_cm, target_id, ids_json, mode),
             )
             self._conn.commit()
 
@@ -77,18 +88,32 @@ class DistanceStore:
         with self._lock:
             if since is not None:
                 rows = self._conn.execute(
-                    "SELECT ts, est_m, lo, hi, gt_cm, target_id, mode FROM distance_samples "
+                    "SELECT ts, est_m, lo, hi, gt_cm, target_id, target_ids, mode "
+                    "FROM distance_samples "
                     "WHERE ts > ? ORDER BY ts ASC LIMIT ?",
                     (float(since), limit),
                 ).fetchall()
             else:
                 rows = self._conn.execute(
-                    "SELECT ts, est_m, lo, hi, gt_cm, target_id, mode FROM distance_samples "
+                    "SELECT ts, est_m, lo, hi, gt_cm, target_id, target_ids, mode "
+                    "FROM distance_samples "
                     "ORDER BY ts DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
                 rows = list(reversed(rows))
-        return [{c: r[c] for c in _COLS} for r in rows]
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            row = {c: r[c] for c in _COLS}
+            raw_ids = row.pop("target_ids", None)
+            if raw_ids:
+                try:
+                    row["target_ids"] = json.loads(str(raw_ids))
+                except json.JSONDecodeError:
+                    row["target_ids"] = []
+            else:
+                row["target_ids"] = [row["target_id"]] if row.get("target_id") is not None else []
+            out.append(row)
+        return out
 
     def close(self) -> None:
         with self._lock:

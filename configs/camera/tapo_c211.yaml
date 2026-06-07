@@ -12,7 +12,9 @@ cy: 540.0
 width: 1920
 height: 1080
 fov_deg: 110.0
-dist_model: fov
+# Skip FOV undistort until fx/fy are re-anchored — placeholder intrinsics + fov
+# rectify warps the live feed (same rationale as go2_1080p dist_model: none).
+dist_model: none
 mount_height_m: 0.15    # depends on how you mount it on the chassis/servo
 needs_calibration: true
 # RTSP: set the Camera Account (Tapo app -> Advanced -> Camera Account), then:
