@@ -4,7 +4,14 @@
  * auto-discovery feeding a pick-list instead of requiring a typed target. */
 
 import { useState } from "react";
-import { api, apiBase, buildDefaultBase, setApiBase, clearApiBase } from "@/lib/api";
+import {
+  api,
+  apiBase,
+  buildDefaultBase,
+  setApiBase,
+  clearApiBase,
+  type CameraProfile,
+} from "@/lib/api";
 
 type Msg = { text: string; tone: "ok" | "warn" } | null;
 
@@ -22,6 +29,7 @@ export function ConnectionsTab() {
   }
 
   const [camSpec, setCamSpec] = useState("");
+  const [camProfile, setCamProfile] = useState<CameraProfile>("go2_1080p");
   const [camMsg, setCamMsg] = useState<Msg>(null);
 
   const [conn, setConn] = useState("dummy");
@@ -32,10 +40,25 @@ export function ConnectionsTab() {
   const [discoverHint, setDiscoverHint] = useState<string | null>(null);
 
   async function connectCam() {
-    const r = await api.connectCamera(camSpec || "synthetic");
-    if (r.ok) setCamMsg({ text: r.warning ?? `connected: ${r.label}`, tone: r.warning ? "warn" : "ok" });
-    else setCamMsg({ text: errText(r), tone: "warn" });
+    const r = await api.connectCamera(camSpec || "synthetic", camProfile);
+    if (r.ok) {
+      // Uncalibrated intrinsics (placeholder distances) is a warn condition, not
+      // a green ok — surface it WARN-toned so distance is never trusted blindly.
+      const uncalibrated = !r.calibrated;
+      const text = r.warning
+        ? r.warning
+        : uncalibrated
+          ? `connected: ${r.label} — uncalibrated (${r.camera_profile}); distance is approximate`
+          : `connected: ${r.label} (${r.camera_profile})`;
+      setCamMsg({ text, tone: r.warning || uncalibrated ? "warn" : "ok" });
+    } else {
+      setCamMsg({ text: errText(r), tone: "warn" });
+    }
   }
+
+  // The Tapo speaks RTSP; suggest (do NOT auto-switch) the matching profile.
+  const looksRtsp = /^rtsp:\/\//i.test(camSpec.trim());
+  const suggestTapo = looksRtsp && camProfile !== "tapo_c211";
 
   async function discover() {
     setDiscoverHint("scanning…");
@@ -104,12 +127,34 @@ export function ConnectionsTab() {
 
       <section className="op-surface p-4">
         <h3 className="mb-2 font-display font-semibold">Camera (wireless)</h3>
-        <input
-          className="w-full rounded-md border border-line bg-bg px-3 py-2 text-sm"
-          placeholder="synthetic | 0 | rtsp://user:pass@ip:554/stream1"
-          value={camSpec}
-          onChange={(e) => setCamSpec(e.target.value)}
-        />
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input
+            className="w-full rounded-md border border-line bg-bg px-3 py-2 text-sm"
+            placeholder="synthetic | 0 | rtsp://user:pass@ip:554/stream1"
+            value={camSpec}
+            onChange={(e) => setCamSpec(e.target.value)}
+          />
+          <select
+            className="rounded-md border border-line bg-bg px-3 py-2 text-sm"
+            value={camProfile}
+            onChange={(e) => setCamProfile(e.target.value as CameraProfile)}
+            aria-label="Camera profile"
+            title="Sensor/lens profile — sets intrinsics + (un)distortion"
+          >
+            <option value="go2_1080p">go2_1080p</option>
+            <option value="tapo_c211">tapo_c211</option>
+          </select>
+        </div>
+        {suggestTapo && (
+          <div className="mt-2 text-xs text-warn">
+            This looks like an RTSP stream — the Tapo C211 needs the{" "}
+            <code className="font-mono">tapo_c211</code> profile for correct distances.
+          </div>
+        )}
+        <p className="mt-2 text-xs text-dim">
+          Tapo needs a Camera Account (Tapo app → Advanced → Camera Account), not
+          your cloud login.
+        </p>
         <div className="mt-2 flex gap-2">
           <button type="button" className="op-btn" onClick={connectCam}>
             Connect

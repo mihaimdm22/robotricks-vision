@@ -2,7 +2,7 @@
 
 /**
  * The control console: persistent safety header + status banner, a video/
- * telemetry column, and a tabbed panel (Control / Models / Connections / Eval).
+ * telemetry column, and a tabbed panel (Control / Models / Connections / CV).
  * All robot I/O goes through the one telemetry WebSocket; one-shot config
  * actions (model/camera/robot) use REST. Mode + drive require the drive token;
  * E-stop never does.
@@ -18,14 +18,14 @@ import { TelemetryStrip } from "./TelemetryStrip";
 import { DrivePad } from "./DrivePad";
 import { ModelsTab } from "./ModelsTab";
 import { ConnectionsTab } from "./ConnectionsTab";
-import { EvalTab } from "./EvalTab";
+import { CVTab } from "./CVTab";
 
-type Tab = "control" | "models" | "connections" | "eval";
+type Tab = "control" | "models" | "connections" | "cv";
 const TABS: { id: Tab; label: string }[] = [
   { id: "control", label: "Control" },
   { id: "models", label: "Models" },
   { id: "connections", label: "Connections" },
-  { id: "eval", label: "Eval" },
+  { id: "cv", label: "CV" },
 ];
 
 const MODES = ["IDLE", "MANUAL", "FOLLOW"] as const;
@@ -142,7 +142,7 @@ function ConsoleBody() {
           )}
           {tab === "models" && <ModelsTab />}
           {tab === "connections" && <ConnectionsTab />}
-          {tab === "eval" && <EvalTab />}
+          {tab === "cv" && <CVTab />}
         </section>
       </main>
     </div>

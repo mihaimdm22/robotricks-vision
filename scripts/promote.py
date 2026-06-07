@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -27,30 +26,21 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from catranger import history  # noqa: E402
+from catranger.train.promote import set_finetuned_weights  # noqa: E402
 
 BEST_TRIAL = REPO / "runs" / "train" / "best_trial.json"
 LOG_PATH = REPO / "runs" / "train" / "autoresearch_log.jsonl"
 TASK_CONFIG = REPO / "configs" / "cat_distance.yaml"
-_FT_LINE = re.compile(r"^(\s*finetuned_weights:\s*).*$", re.MULTILINE)
 
 
 def _set_finetuned_weights(value: str) -> bool:
-    """Rewrite the `finetuned_weights:` line in cat_distance.yaml. Returns True if it
-    changed something. Comment-preserving (line-level edit, not a yaml round-trip)."""
-    text = TASK_CONFIG.read_text(encoding="utf-8")
-    if not _FT_LINE.search(text):
-        print(f"[promote] no 'finetuned_weights:' line in {TASK_CONFIG} — aborting.")
+    """Delegate to the single source of truth (catranger.train.promote) so the CLI
+    and the web Training tab can never diverge. Returns True if the file changed."""
+    try:
+        return set_finetuned_weights(value)
+    except ValueError as exc:
+        print(f"[promote] {exc} — aborting.")
         return False
-    comment = (
-        "  # set by scripts/promote.py (overrides approach_a)"
-        if value != "null"
-        else "  # set by training to override approach_a (e.g. runs/train/best.pt)"
-    )
-    new = _FT_LINE.sub(rf"\g<1>{value}{comment}", text, count=1)
-    if new == text:
-        return False
-    TASK_CONFIG.write_text(new, encoding="utf-8")
-    return True
 
 
 def _print_trial_log() -> None:
