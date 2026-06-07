@@ -2,6 +2,31 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.7.1] - 2026-06-07
+
+Stable cat identity across BoT-SORT ID churn: the pipeline now follows one cat via
+`CatTracker` lock logic instead of the largest box, accumulates every tracker id
+seen for that target, and surfaces them as `#3/7/12` in the overlay, telemetry
+strip, and SQLite history. Tapo RTSP streams auto-enable PTZ when credentials are
+present, and the Models tab lists registry entries with research-backed descriptions.
+
+### Added
+- **`known_ids` / `target_ids`** — alias set on `CatTracker`, persisted in
+  `HistoryStore` (`target_ids` JSON column with migration), forwarded through
+  runtime telemetry and legacy + React console UIs.
+- **`tests/test_track.py`** — lock handoff, coast, and alias accumulation coverage.
+
+### Changed
+- **`CatRanger.process()`** uses `CatTracker` for target selection; speed history
+  spans alias ids; follower no longer resets acquire when a new id is already known.
+- **Models registry** — richer `configs/models.yaml`, API descriptions from
+  `docs/research/cat-tracker.md`, Models tab shows full catalog.
+- **Tapo** — credentialed RTSP URLs attach PTZ handle; C211 profile defaults updated.
+
+### Fixed
+- Target box and telemetry showing a single BoT-SORT id after occlusion/reassign.
+- PTZ controls staying disabled after connecting an authenticated Tapo RTSP stream.
+
 ## [0.7.0] - 2026-06-07
 
 Integrate the team's **tested, on-the-rig** Arduino firmware (Adafruit Motor Shield,

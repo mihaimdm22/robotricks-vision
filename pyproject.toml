@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "catranger"
-version = "0.7.0"
+version = "0.7.1"
 description = "Cat detection + tracking + monocular distance for the Monsson hack-a-ton 2026 (Go2 / Tapo C211)"
 readme = "README.md"
 # 3.11 floor: the code already uses PEP 604 `X | Y` unions (config.py, train/prepare.py)
@@ -38,6 +38,7 @@ train = [
 hw = [
     "pyserial>=3.5",
     "pytapo>=3.3",
+    "onvif-zeep>=0.2.12",  # Tapo pan/tilt via ONVIF (port 2020); reliable with Camera Account
 ]
 # Web control platform. `catranger serve` needs perception too, so the canonical
 # install is `uv sync --extra ml --extra web` (serve preflights ml and says so).
