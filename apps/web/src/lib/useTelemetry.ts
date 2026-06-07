@@ -57,10 +57,13 @@ export type Telemetry = {
   model_status: string;
   model_error: string | null;
   camera: string;
+  camera_profile: string | null;
+  camera_calibrated: boolean;
   robot: string;
   frame_age_ms: number | null;
   video_stale_ms: number;
   eval_running: boolean;
+  train_running: boolean;
   you_are_controller: boolean;
   controller_id: number | null;
   overlay?: Overlay | null;

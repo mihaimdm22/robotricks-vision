@@ -51,8 +51,12 @@ def _budget_epochs(budget_min: float, sec_per_epoch: float | None, cap: int) -> 
     return max(1, min(cap, fit))
 
 
-def autoresearch(config_path: str = "configs/train.yaml") -> dict[str, Any]:
+def autoresearch(
+    config_path: str = "configs/train.yaml", device: str | None = None
+) -> dict[str, Any]:
     cfg = _load_config(config_path)
+    if device:
+        cfg["device"] = device  # let the web/CLI pick the box's real device
     ar = cfg.get("autoresearch", {}) or {}
     trials: list[dict[str, Any]] = list(ar.get("trials", []) or [])
     budget_min = float(ar.get("budget_min", 5))
@@ -160,8 +164,9 @@ def autoresearch(config_path: str = "configs/train.yaml") -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Fixed-budget keep/reject hyperparam sweep.")
     ap.add_argument("--config", default="configs/train.yaml", help="path to train.yaml")
+    ap.add_argument("--device", default=None, help="override device (cuda|mps|cpu|0)")
     args = ap.parse_args(argv)
-    autoresearch(args.config)
+    autoresearch(args.config, device=args.device)
     return 0
 
 

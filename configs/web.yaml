@@ -34,6 +34,10 @@ safe_stop_cm: 20          # mirror of the firmware hard-stop; surfaced in the UI
 # --- web console (Next.js front-end) ---
 control_idle_timeout_s: 8   # M5 drive token: release it if the holder goes quiet
                             # this long, so another operator can take over.
+
+# --- CV / Training tab ---
+train_config: configs/train.yaml  # plan the in-browser train/autoresearch jobs run
+ptz_min_interval_s: 0.3           # throttle Tapo pan/tilt so the motor doesn't chatter
 cors_origins:               # browser origins allowed to call /api/* (the Next.js
                             # dev/prod console). Empty = same-origin only. Add your
                             # LAN console origin for phone access, e.g.:

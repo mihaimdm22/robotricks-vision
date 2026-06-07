@@ -33,6 +33,8 @@ class FakeRuntime:
         self.robot = "dummy"
         self._eval_running = False
         self._eval_result: dict | None = None
+        self._train_running = False
+        self._train_result: dict | None = None
 
     # lifecycle
     def start(self) -> None:
@@ -89,9 +91,10 @@ class FakeRuntime:
             raise KeyError(model_id)
         return {"ok": True, "model": model_id, "status": "ready"}
 
-    def connect_camera(self, spec: str) -> dict:
+    def connect_camera(self, spec: str, camera: str | None = None) -> dict:
         self.camera = spec
-        return {"ok": True, "label": spec, "warning": None}
+        self.camera_profile = camera
+        return {"ok": True, "label": spec, "warning": None, "camera_profile": camera}
 
     def connect_robot(self, connection: str, target: str | None = None, baud: int = 115200) -> dict:
         self.robot = f"{connection}:{target}" if target else connection
@@ -117,6 +120,15 @@ class FakeRuntime:
                 "fix": "",
                 "status": 409,
             }
+        if self._train_running:
+            return {
+                "ok": False,
+                "code": "heavy_job_busy",
+                "problem": "training running",
+                "cause": "",
+                "fix": "",
+                "status": 409,
+            }
         self._eval_running = True
         return {"ok": True, "state": "running"}
 
@@ -137,6 +149,62 @@ class FakeRuntime:
     def cancel_eval(self) -> dict:
         self._eval_running = False
         return {"ok": True, "cancelled": True}
+
+    # training (CV tab) — a controllable fake for route-contract tests
+    @property
+    def training_active(self) -> bool:
+        return self._train_running
+
+    def train_readiness(self) -> dict:
+        return {
+            "ok": True,
+            "ml_available": False,
+            "dataset_ready": True,
+            "running": self._train_running,
+            "eval_running": self._eval_running,
+            "idle": self.controller.mode.value == "IDLE",
+        }
+
+    def start_train(self, params: dict) -> dict:
+        kind = params.get("kind")
+        if kind not in ("prepare", "train", "autoresearch"):
+            return {"ok": False, "code": "train_bad_kind", "problem": "bad", "status": 400}
+        if self.controller.mode.value != "IDLE":
+            return {"ok": False, "code": "train_not_idle", "problem": "not idle", "status": 409}
+        if self._eval_running:
+            return {"ok": False, "code": "heavy_job_busy", "problem": "eval running", "status": 409}
+        if self._train_running:
+            return {"ok": False, "code": "train_busy", "problem": "already", "status": 409}
+        self._train_running = True
+        return {"ok": True, "state": "running", "kind": kind}
+
+    def train_status(self) -> dict:
+        return {"ok": True, "state": "running" if self._train_running else "idle", "kind": None}
+
+    def train_result(self) -> dict | None:
+        return self._train_result
+
+    def cancel_train(self) -> dict:
+        self._train_running = False
+        return {"ok": True, "cancelled": True}
+
+    def train_history(self, limit: int = 50) -> dict:
+        return {"ok": True, "runs": []}
+
+    def promote_model(self, params: dict) -> dict:
+        if not (params.get("weights") or params.get("run_dir")):
+            return {"ok": False, "code": "promote_no_winner", "problem": "none", "status": 409}
+        return {
+            "ok": True,
+            "weights": params.get("weights") or f"runs/history/{params['run_dir']}/best.pt",
+            "model_id": "cats-finetuned",
+        }
+
+    def ptz_move(self, pan: float, tilt: float) -> dict:
+        return {"ok": False, "code": "ptz_no_camera", "problem": "no tapo", "status": 409}
+
+    def ptz_preset(self, name: str) -> dict:
+        return {"ok": False, "code": "ptz_no_camera", "problem": "no tapo", "status": 409}
 
     # discovery (M5)
     def discover_devices(self) -> dict:
@@ -361,3 +429,96 @@ def test_ws_pushes_telemetry_and_accepts_heartbeat(client_and_runtime) -> None:
         assert msg["type"] == "telemetry"
         assert msg["mode"] == "IDLE"
         ws.send_json({"type": "heartbeat"})
+
+
+# --------------------------------------------------------- camera profile / PTZ
+def test_camera_connect_passes_profile(client_and_runtime) -> None:
+    client, rt = client_and_runtime
+    r = client.post("/api/camera/connect", json={"spec": "rtsp://h/s", "camera": "tapo_c211"})
+    assert r.json()["ok"] is True
+    assert rt.camera_profile == "tapo_c211"
+
+
+def test_ptz_without_tapo_is_409(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    r = client.post("/api/camera/ptz", json={"pan": 0.5, "tilt": 0.0})
+    assert r.status_code == 409
+    assert r.json()["code"] == "ptz_no_camera"
+    rp = client.post("/api/camera/ptz/preset", json={"name": "home"})
+    assert rp.status_code == 409
+
+
+# ------------------------------------------------------------- training routes
+def test_train_readiness(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    body = client.get("/api/train/readiness").json()
+    assert body["ok"] is True and body["idle"] is True
+
+
+def test_train_run_and_busy(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    r = client.post("/api/train/run", json={"kind": "train"})
+    assert r.json()["ok"] is True and r.json()["state"] == "running"
+    busy = client.post("/api/train/run", json={"kind": "train"})
+    assert busy.status_code == 409 and busy.json()["code"] == "train_busy"
+
+
+def test_train_run_bad_kind(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    r = client.post("/api/train/run", json={"kind": "frobnicate"})
+    assert r.status_code == 400 and r.json()["code"] == "train_bad_kind"
+
+
+def test_train_run_refused_when_not_idle(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    client.post("/api/mode", json={"mode": "MANUAL"})
+    r = client.post("/api/train/run", json={"kind": "train"})
+    assert r.status_code == 409 and r.json()["code"] == "train_not_idle"
+
+
+def test_train_blocks_eval_and_vice_versa(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    client.post("/api/train/run", json={"kind": "train"})
+    # eval refused while training holds the heavy-job slot
+    r = client.post("/api/eval/run", json={"source": "data/raw/how_far"})
+    assert r.status_code == 409 and r.json()["code"] == "heavy_job_busy"
+
+
+def test_mode_switch_blocked_while_training(client_and_runtime) -> None:
+    # T1: a drive switch is refused (not silently cancelling training).
+    client, _ = client_and_runtime
+    client.post("/api/train/run", json={"kind": "train"})
+    r = client.post("/api/mode", json={"mode": "MANUAL"})
+    assert r.status_code == 409 and r.json()["code"] == "train_active"
+
+
+def test_train_cancel_then_can_drive(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    client.post("/api/train/run", json={"kind": "train"})
+    assert client.post("/api/train/cancel").json()["cancelled"] is True
+    assert client.post("/api/mode", json={"mode": "MANUAL"}).json()["ok"] is True
+
+
+def test_train_history_route(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    body = client.get("/api/train/history").json()
+    assert body["ok"] is True and isinstance(body["runs"], list)
+
+
+def test_promote_without_winner_is_409(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    r = client.post("/api/train/promote", json={})
+    assert r.status_code == 409 and r.json()["code"] == "promote_no_winner"
+
+
+def test_promote_with_weights(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    r = client.post("/api/train/promote", json={"weights": "runs/train/best.pt"})
+    assert r.json()["ok"] is True and r.json()["model_id"] == "cats-finetuned"
+
+
+def test_promote_with_run_dir(client_and_runtime) -> None:
+    client, _ = client_and_runtime
+    r = client.post("/api/train/promote", json={"run_dir": "20260607-web-train"})
+    assert r.json()["ok"] is True
+    assert r.json()["weights"].endswith("/best.pt")

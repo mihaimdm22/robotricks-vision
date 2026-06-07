@@ -74,8 +74,18 @@ end-to-end; everything below is polish, hardware bring-up, or stretch.
 - [x] **Single-controller token** (M5) — `ControlArbiter`, WS-gated drive intents, ungated E-stop. **Completed:** v0.3.0 (2026-06-06).
 - [x] **Device auto-discovery** (M5) — `/api/robot/discover` + Connections pick-list. **Completed:** v0.3.0 (2026-06-06).
 - [x] **Offline weights** (M5) — `scripts/fetch_weights.py` warms the ultralytics cache (`make fetch-weights`); weights stay gitignored. **Completed:** v0.3.0 (2026-06-06).
+- [x] **CV/Training tab + Tapo intrinsics/PTZ/calibration** (local-app-plan.md) — in-browser
+  `prepare`/`train`/`autoresearch` orchestrator + run-history + promote; runtime camera-profile
+  re-anchor + `scripts/calibrate_camera.py`; Tapo PTZ. **Completed:** v0.4.0 (2026-06-07).
 - [ ] **Console smoke test runner** — no jest/vitest is configured in `apps/web`; `next build` static-prerenders `/console` as a render smoke. Add a component test runner if the console grows. **Priority:** P3.
-- [ ] Not building (explicitly out of scope): auth/TLS/public exposure, WebRTC video, in-browser training/annotation, session record/replay, native mobile, multi-robot.
+- [ ] **In-console dataset form** — the Training tab exposes a `source` field; surface the Roboflow
+  workspace/project/`ROBOFLOW_API_KEY` (and a fiftyone-presence check) as a form so prepare isn't a
+  config-file edit. **Priority:** P3.
+- [ ] **Real Tapo calibration numbers** — the re-anchor mechanism + `make calibrate` ship, but
+  `configs/camera/tapo_c211.yaml` still has placeholder `fx/fy` (`needs_calibration: true`). Run the
+  calibration with the physical C211 to write real intrinsics. **Priority:** P1 (on the rubric).
+- [ ] Not building (explicitly out of scope): auth/TLS/public exposure, WebRTC video, in-browser
+  annotation/labeling, session record/replay, native mobile, multi-robot, multi-GPU training.
 
 ### Vercel deploy follow-ups (deferred at the `vercel-deploy-plan.md` /autoplan gate — Shape A)
 > Shipped in this plan: public **landing** on Vercel + the **local** console keeps

@@ -112,14 +112,19 @@ firmware's 20 cm hard-stop underneath it all.
 |---|---|
 | **Control** | live video, press-and-hold drive pad (or W/A/S/D), IDLE/MANUAL/FOLLOW, speed + camera-pan sliders, E-stop; one operator holds the drive token, others observe + can request control |
 | **Models** | hot-swap the detector from `configs/models.yaml` (YOLO11 ↔ RT-DETR ↔ a fine-tuned `best.pt`); the COCO baseline is the always-available default |
-| **Connections** | camera (`synthetic` \| webcam `0` \| `rtsp://…`) + robot (`bt` HC-05 / `ble` HM-10 / `usb`) with device auto-discovery; a failed real link shows honestly as a simulation fallback, never a false "connected" |
-| **Eval** | run the eval pipeline over a recorded source → metric cards + the full `report.md` (FPS / tracking / smoothness; distance MAE when labels are supplied). Refused unless IDLE (it's heavy). |
+| **Connections** | camera (`synthetic` \| webcam `0` \| `rtsp://…`) **+ an intrinsics profile** (`go2_1080p` / `tapo_c211`) so distance re-anchors live; robot (`bt` HC-05 / `ble` HM-10 / `usb`) with device auto-discovery; a failed real link shows honestly as a simulation fallback, never a false "connected" |
+| **CV** | two sub-views. **Eval**: run the eval pipeline over a recorded source → metric cards + the full `report.md` (FPS / tracking / smoothness; distance MAE when labels are supplied). **Training**: launch `prepare` / `train` / `autoresearch` as background jobs (live progress + log tail + cancel), browse `runs/history`, and **promote** a winner into both the pipeline and the Models tab. Both are heavy → refused unless IDLE. |
+
+The **Control** tab also carries **camera pan/tilt (PTZ)** on the video pane when a
+`tapo_c211` source is connected (the chassis turn is "Body yaw"; PTZ moves the camera).
 
 Config lives in `configs/web.yaml` (host, port, fps cap, watchdog, CORS origins, control
-token timeout) and `configs/models.yaml` (the registry). Cat detection needs the `ml`
-extra; without it the console still streams video and drives by hand. Pre-fetch weights for
-an offline demo with `make fetch-weights`. Camera over RTSP needs a Tapo **Camera Account**
-(not your cloud login); HC-05 over Bluetooth is **9600** baud (see Hardware).
+token timeout, `train_config`, `ptz_min_interval_s`) and `configs/models.yaml` (the
+registry). Cat detection + training need the `ml` extra; without it the console still
+streams video and drives by hand. Pre-fetch weights for an offline demo with
+`make fetch-weights`. Camera over RTSP needs a Tapo **Camera Account** (not your cloud
+login); HC-05 over Bluetooth is **9600** baud (see Hardware). Tapo distance is only
+correct after calibrating its intrinsics — see [Hardware](#hardware--fully-wireless-live-demo-prop-not-whats-scored).
 
 > The legacy zero-Node panel is still served at `http://<laptop-ip>:8080/` as a fallback
 > for a live demo with no Node toolchain. The Next.js console at `:3000` is the primary UI.
@@ -177,7 +182,20 @@ uv run catranger autoresearch   # karpathy/autoresearch-style keep/reject loop o
 (`catranger/train/autoresearch.py`, directions in `catranger/train/program.md`). We
 **fine-tune**, we do not train from scratch (no labels, no time, worse generalization).
 After training, point `detector.finetuned_weights` in `configs/cat_distance.yaml` at the
-new `best.pt` and the demo uses it automatically.
+new `best.pt` and the demo uses it automatically (or run `make promote`).
+
+> **Prerequisite — a dataset.** `train`/`autoresearch` need a prepared dataset
+> (`data/cat/`). `prepare` pulls one from **Roboflow** (set `dataset.roboflow.*` in
+> `configs/train.yaml` + `ROBOFLOW_API_KEY`) or **Open Images** (`pip install fiftyone`).
+> Until then the train commands stop with a clear "run prepare first". Pick the box's
+> device with `--device cuda|mps|cpu` (default `mps` in `configs/train.yaml`); CPU works
+> but is slow. NB: `scripts/setup_data.py` (`make data`) symlinks the contest *inference*
+> sets for eval/demo — it is **not** a training dataset.
+
+**The same operations are in the console** under the **CV → Training** tab (launch,
+live progress, cancel, run-history, promote) — see [Web control panel](#web-control-panel).
+Training there is IDLE-gated and shares one "heavy job" slot with eval; the pretrained
+baseline keeps running throughout and is always one `make promote-revert` away.
 
 ### Overnight runs (unattended train + eval, archived to history)
 
@@ -224,6 +242,20 @@ pan/tilt via `pytapo`). Run on it directly:
 ```bash
 python scripts/demo.py --source "rtsp://USER:PASS@CAM_IP:554/stream1" --camera tapo_c211 --show
 ```
+In the console: connect the rtsp URL in **Connections**, pick the `tapo_c211`
+profile (re-anchors distance live), and pan/tilt from the **PTZ** controls on the
+video pane. RTSP needs a Tapo **Camera Account** (Tapo app → Advanced → Camera
+Account), *not* your cloud login.
+
+> **Calibrate before trusting Tapo distance.** `configs/camera/tapo_c211.yaml` ships
+> placeholder `fx/fy` (`needs_calibration: true`), so distances on Tapo frames are
+> guesses (the console flags them "uncalibrated") until you re-anchor. Photograph an
+> object of known height at a known distance, read its pixel height, then:
+> ```bash
+> make calibrate H=0.297 Z=2.0 PX=240    # A4 sheet (0.297 m) at 2.0 m, 240 px tall
+> # or: python scripts/calibrate_camera.py --camera tapo_c211 --known-height-m 0.297 \
+> #         --distance-m 2.0 --pixel-height-px 240
+> ```
 
 **Robot — Arduino over Bluetooth** → `arduino/cat_ranger/cat_ranger.ino` +
 `catranger/hw/{serial_bridge,bluetooth}.py`. Same `C dx dy rot pan` / `D <cm>` protocol

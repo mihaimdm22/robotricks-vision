@@ -2,6 +2,59 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.4.0] - 2026-06-07
+
+Local control app: a full in-browser **CV/Training** tab and **Tapo C211** camera
+controls (intrinsics re-anchor + calibration + PTZ), built on the existing two-process
+console. The scored perception core (`intrinsics/distance/detect/depth/track/pipeline`)
+is untouched. Planned and reviewed via `/autoplan` (`local-app-plan.md`).
+
+### Added
+- **In-browser training orchestrator** (CV tab → Training): launch `prepare` / `train` /
+  `autoresearch` as background **subprocess** jobs with live coarse progress + a log tail,
+  a run-history table (`runs/history/`), and per-run **promote**. New
+  `catranger/web/train_job.py` (state machine, injected runner — unit-tested),
+  `catranger/train/runner.py` (process-group spawn + an independent cancel watcher that
+  kills a stalled job so E-stop always frees the GPU), and `/api/train/{run,status,report,
+  cancel,history,readiness}` + `/api/train/promote`. Eval and training share ONE
+  heavy-job slot (mutually exclusive under a lock); both are IDLE-gated.
+- **Tapo intrinsics re-anchor**: `/api/camera/connect` accepts a camera profile
+  (`go2_1080p` | `tapo_c211`); the runtime rebuilds the ranger and atomically swaps it so
+  distance is correct on Tapo frames. Telemetry carries `camera_profile` /
+  `camera_calibrated`; the console shows a warn-toned, qualified ("~ uncalibrated")
+  distance until the camera is calibrated.
+- **Camera calibration helper**: `scripts/calibrate_camera.py` solves `fx = fy = h*Z/H`
+  and writes `configs/camera/<cam>.yaml` (`make calibrate H=.. Z=.. PX=..`).
+- **Tapo PTZ**: the runtime holds a `TapoCamera` handle for an active Tapo source;
+  throttled, threadpooled `/api/camera/ptz[/preset]`; "Camera pan/tilt" controls on the
+  video pane (the chassis turn is now "Body yaw"). PTZ is its own device — not
+  drive-token-gated.
+- **Single-source promote** (`catranger/train/promote.py`): atomic, comment-preserving
+  write of `cat_distance.yaml:finetuned_weights` **and** a `configs/models.yaml` profile
+  (+ live registry reload) so a promoted fine-tune is live in both the CLI pipeline and
+  the console Models tab. `scripts/promote.py` delegates to it.
+- `--device` flag on `catranger train` / `catranger autoresearch`.
+- Tests: `tests/test_web_train_job.py`, `test_train_promote.py`,
+  `test_calibrate_and_camera.py`, and training/PTZ/camera-profile/T1-gate route contracts
+  in `test_web_server.py`.
+
+### Changed
+- **Safety**: switching to MANUAL/FOLLOW is refused (typed `train_active`, not a silent
+  cancel) while a training job holds the GPU; E-stop and shutdown terminate the training
+  subprocess group.
+- **Credential hygiene**: rtsp credentials are redacted from telemetry / status / logs.
+- Camera-connect failures on an rtsp source now report a specific cause (host unreachable
+  vs RTSP refused → set a Tapo Camera Account) instead of a generic "unavailable".
+- Console: the standalone Eval tab moves under a new **CV** tab (Eval / Training
+  sub-toggle); `configs/web.yaml` gains `train_config` and `ptz_min_interval_s`.
+- README + Makefile document the in-console training, Tapo calibration, and Camera Account.
+
+### Notes
+- The Tapo profile ships placeholder intrinsics (`needs_calibration: true`) — run
+  `make calibrate` with the physical camera for accurate distance; the UI flags it until
+  then. In-console dataset prep exposes a source field; Roboflow workspace/key still come
+  from `configs/train.yaml` (a deeper in-UI dataset form is a fast-follow).
+
 ## [0.3.2] - 2026-06-07
 
 Web control panel: a live distance-history chart and the operator UI restyled to the

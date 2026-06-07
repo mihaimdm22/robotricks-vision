@@ -216,9 +216,12 @@ def main(argv: list[str] | None = None) -> int:
         help="crash recovery (WS-A4): auto=resume from last.pt if present, never=always "
         "fresh, force=require a checkpoint",
     )
+    ap.add_argument("--device", default=None, help="override device (cuda|mps|cpu|0)")
     args = ap.parse_args(argv)
 
     cfg = _load_config(args.config)
+    if args.device:
+        cfg["device"] = args.device  # let the web/CLI pick the box's real device
     out = train_once(cfg, name=args.name, epochs=args.epochs, resume=args.resume)
 
     # One number, printed alone, so a harness/grep can read it.

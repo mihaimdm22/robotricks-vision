@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import { videoURL } from "@/lib/api";
 import type { Telemetry } from "@/lib/useTelemetry";
+import { CameraPTZ } from "./CameraPTZ";
 import { OverlayCanvas } from "./OverlayCanvas";
 
 export function VideoPane({ telemetry }: { telemetry: Telemetry | null }) {
@@ -32,6 +33,7 @@ export function VideoPane({ telemetry }: { telemetry: Telemetry | null }) {
   }, [stale]);
 
   return (
+    <div className="flex flex-col gap-2">
     <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-line bg-black">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
@@ -54,6 +56,8 @@ export function VideoPane({ telemetry }: { telemetry: Telemetry | null }) {
       ) : (
         stale && <Overlay tone="warn">VIDEO STALE — no fresh frames</Overlay>
       )}
+    </div>
+      <CameraPTZ telemetry={telemetry} />
     </div>
   );
 }

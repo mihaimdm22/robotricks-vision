@@ -3,9 +3,10 @@
 SOURCE   ?= data/raw/how_far
 APPROACH ?= A
 CONFIG   ?= cat_distance
+CAMERA   ?= tapo_c211
 
 .PHONY: help install install-ml lock data doctor demo demo-video eval \
-        prepare train autoresearch keepreject overnight promote promote-revert history jobs \
+        prepare train autoresearch keepreject overnight promote promote-revert history jobs calibrate \
         lint format typecheck test check clean web web-setup web-test fetch-weights
 
 help:
@@ -67,6 +68,10 @@ history:             ## print the run-history archive index (runs/history/INDEX.
 
 jobs:                ## print the durable job queue (live state; sibling of GET /api/jobs)
 	uv run python -m catranger.jobqueue
+
+calibrate:           ## re-anchor camera fx/fy: make calibrate H=0.297 Z=2.0 PX=240
+	uv run python scripts/calibrate_camera.py --camera $(CAMERA) \
+		--known-height-m $(H) --distance-m $(Z) --pixel-height-px $(PX)
 
 lint:                ## ruff lint (with safe autofixes)
 	uv run ruff check catranger scripts tests --fix
