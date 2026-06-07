@@ -2,6 +2,39 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.8.1] - 2026-06-07
+
+Ship the full console experience for live cat tracking: saved cat library with face
+matching, reliable Tapo video in the Next.js console, manual peripheral toggles on
+the rig, and FOV-estimated Tapo intrinsics so distance reads are usable before a
+one-shot calibration.
+
+### Added
+- **Cat library** — SQLite catalog (`/api/cats`), auto-save on detection, **Cats**
+  tab with thumbnails, rename, delete, and **Find** (FOLLOW + bearing-biased search).
+- **Cat picker** — Control tab lists in-view and out-of-view targets; merges library
+  sightings with live overlay data.
+- **Same-origin MJPEG proxy** — `/api/catranger/video` fixes black video in the Next.js
+  console while WebSocket overlays keep updating.
+- **Peripherals panel** — manual headlight / laser toggles over the robot link with
+  live telemetry feedback.
+- **Console help** — contextual tooltips and detail modals across control surfaces.
+- **Sonar-assisted calibration** — `POST /api/calibrate/sonar` scales Tapo `fy` from
+  HC-SR04 ground truth.
+- **Arduino flash job** — web-triggered firmware upload for the CharBridge rig.
+
+### Changed
+- **Tapo C211 intrinsics** — `fx/fy` derived from 110° FOV (~672 px); distances are
+  approximate until refined with `scripts/calibrate_camera.py`.
+- **RTSP connect** — 15 s Tapo negotiation window; clearer fallback diagnostics.
+- **Overlay canvas** — draws all detection boxes when MJPEG repaints stall.
+- **CharBridge / firmware** — peripheral command vocabulary and state reporting.
+
+### Fixed
+- Black live video with floating cat boxes on `:3000/console` (cross-origin MJPEG).
+- Control tab / drive pad layout regressions from full-size tooltip wrappers.
+- Cats tab 404 when backend was not restarted after API additions.
+
 ## [0.8.0] - 2026-06-07
 
 Make the project legible in one read. The GitHub README is rebuilt to industry standard —
