@@ -162,11 +162,16 @@ def open_link(
         "usb"   -> ArduinoBridge(target, baud)            # USB serial (default 115200)
         "bt"    -> ArduinoBridge(target, baud or 9600)    # Classic BT-SPP serial port
         "ble"   -> BLEBridge(target)                       # HM-10 BLE
+        "char"  -> CharBridge(target, baud or 9600)        # TESTED single-char firmware
         "dummy" -> DummyBridge                             # no hardware
         "auto"  -> ble if target looks like a BLE addr/uuid, else serial, else dummy
 
     Always returns an object with send / read_distance_cm / close. Degrades to
     DummyBridge if the requested transport's deps/hardware are unavailable.
+
+    NOTE "char" is for the single-char firmware in arduino/cat_ranger/cat_ranger.ino
+    (Adafruit Motor Shield rig); "usb"/"bt"/"ble" speak the C/D protocol. Pick the one
+    matching the sketch flashed on your Arduino.
     """
     conn = (connection or "auto").lower()
     if conn == "dummy" or (conn == "auto" and not target):
@@ -174,6 +179,17 @@ def open_link(
     if target is None:
         # a real transport was requested but no port/address was given
         return DummyBridge(port=target, verbose=verbose)
+
+    if conn == "char":
+        from catranger.hw.char_bridge import CharBridge
+
+        try:
+            return CharBridge(port=target, baud=9600 if baud == 115200 else baud)
+        except Exception as e:
+            # Bulletproof demo: any link failure (no pyserial, bad/locked port)
+            # degrades to a recorder instead of crashing the run.
+            print(f"[catranger] char link unavailable ({e}); using DummyBridge")
+            return DummyBridge(port=target, verbose=verbose)
 
     if conn == "ble":
         try:

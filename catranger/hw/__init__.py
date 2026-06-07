@@ -18,7 +18,8 @@ install hint) when you actually try to talk to a device.
 
 from __future__ import annotations
 
+from catranger.hw.char_bridge import CharBridge
 from catranger.hw.serial_bridge import ArduinoBridge, DummyBridge, open_bridge
 from catranger.hw.tapo import TapoCamera
 
-__all__ = ["TapoCamera", "ArduinoBridge", "DummyBridge", "open_bridge"]
+__all__ = ["TapoCamera", "ArduinoBridge", "CharBridge", "DummyBridge", "open_bridge"]
