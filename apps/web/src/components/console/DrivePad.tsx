@@ -211,7 +211,7 @@ export function DrivePad({
         <span className="font-mono text-fg">{speed.toFixed(1)}</span>
       </label>
       <label className="mt-2 flex items-center gap-3 text-sm text-muted">
-        Pan
+        Body yaw
         <input
           type="range"
           min={-1}

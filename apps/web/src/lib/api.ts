@@ -149,6 +149,64 @@ export type DiscoverResult = {
   hint: string | null;
 };
 
+/** Camera sensor/lens profile — picks the intrinsics + (un)distortion model. */
+export type CameraProfile = "go2_1080p" | "tapo_c211";
+
+export type CameraConnectResult = {
+  ok: true;
+  label: string;
+  warning?: string;
+  camera_profile: string;
+  calibrated: boolean;
+};
+
+// ---- training (CV tab) ----
+export type TrainKind = "prepare" | "train" | "autoresearch";
+
+export type TrainReadiness = {
+  ok: true;
+  ml_available: boolean;
+  dataset_ready: boolean;
+  running: boolean;
+  eval_running: boolean;
+  idle: boolean;
+};
+
+export type TrainStatus = {
+  ok: true;
+  state: "idle" | "running" | "done" | "error" | "cancelled";
+  kind: string | null;
+  started_at: number | null;
+  elapsed_s: number | null;
+  epoch: number | null;
+  total_epochs: number | null;
+  log_tail: string;
+  rc: number | null;
+  error: string | null;
+  summary: string | null;
+};
+
+export type TrainReport = {
+  ok: true;
+  kind: string;
+  status: string;
+  rc: number | null;
+  metric: number | null;
+  metric_key: string | null;
+  metrics: Record<string, unknown>; // winner dict incl. nested `overrides`
+};
+
+export type TrainHistoryRun = {
+  ts: string; // sortable stamp "YYYYMMDD-HHMMSS-<suffix>" from catranger.history
+  kind: string;
+  status: string;
+  metric: number | null;
+  metric_key: string | null;
+  duration_s: number | null;
+  summary: string | null;
+  dir: string;
+};
+
 // --------------------------------------------------------------------- endpoints
 export const api = {
   setMode: (mode: Mode) => post<{ mode: string }>("/api/mode", { mode }),
@@ -158,9 +216,12 @@ export const api = {
     get<{ models: ModelInfo[]; active: string; status: string }>("/api/models"),
   selectModel: (id: string) =>
     post<{ model: string; status: string; warning?: string }>("/api/models/select", { id }),
-  connectCamera: (spec: string) =>
-    post<{ label: string; warning: string | null }>("/api/camera/connect", { spec }),
+  connectCamera: (spec: string, camera?: CameraProfile) =>
+    post<CameraConnectResult>("/api/camera/connect", camera ? { spec, camera } : { spec }),
   disconnectCamera: () => post("/api/camera/disconnect"),
+  ptz: (pan: number, tilt: number) =>
+    post<{ throttled?: boolean }>("/api/camera/ptz", { pan, tilt }),
+  ptzPreset: (name: string) => post("/api/camera/ptz/preset", { name }),
   connectRobot: (connection: string, target: string | null, baud: number) =>
     post<{ bridge: string; connected: boolean; warning: string | null }>("/api/robot/connect", {
       connection,
@@ -179,4 +240,24 @@ export const api = {
   evalStatus: () => get<EvalStatus>("/api/eval/status"),
   evalReport: () => get<EvalReport>("/api/eval/report"),
   evalCancel: () => post<{ cancelled: boolean }>("/api/eval/cancel"),
+  trainReadiness: () => get<TrainReadiness>("/api/train/readiness"),
+  trainRun: (body: {
+    kind: TrainKind;
+    config?: string;
+    epochs?: number;
+    device?: string;
+    source?: string;
+  }) => post<{ state: string; kind: string }>("/api/train/run", body),
+  trainStatus: () => get<TrainStatus>("/api/train/status"),
+  trainReport: () => get<TrainReport>("/api/train/report"),
+  trainCancel: () => post<{ cancelled: boolean }>("/api/train/cancel"),
+  trainHistory: (limit = 50) =>
+    get<{ runs: TrainHistoryRun[] }>(`/api/train/history?limit=${limit}`),
+  trainPromote: (body: {
+    weights?: string;
+    run_dir?: string;
+    model_id?: string;
+    name?: string;
+  }) =>
+    post<{ weights: string; model_id: string; cli_changed: boolean }>("/api/train/promote", body),
 };

@@ -2,18 +2,21 @@
 
 /**
  * Primary glanceable strip (distance / ground truth / target) + a small
- * diagnostics row (FPS, camera/robot/model pills, eval-running chip).
+ * diagnostics row (FPS, camera/robot/model pills, eval/train-running chips).
  * When the telemetry link is not live, the whole strip is dimmed + struck so a
  * frozen last-known value is never mistaken for a fresh reading.
  */
 
 import type { Telemetry, LinkState } from "@/lib/useTelemetry";
 
-function Stat({ k, v }: { k: string; v: string }) {
+function Stat({ k, v, warn }: { k: string; v: string; warn?: string }) {
   return (
     <div className="op-surface flex flex-col gap-1 px-4 py-3">
       <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-dim">{k}</span>
-      <span className="font-mono text-2xl text-fg">{v}</span>
+      <span className="font-mono text-2xl text-fg">
+        {v}
+        {warn && <span className="ml-1 align-middle text-xs text-warn">{warn}</span>}
+      </span>
     </div>
   );
 }
@@ -39,6 +42,9 @@ export function TelemetryStrip({
   link: LinkState;
 }) {
   const t = telemetry;
+  // Uncalibrated intrinsics → the distance is a rough placeholder, not ground
+  // truth. Qualify it so an operator never reads it as a confident number.
+  const uncal = t?.target_dist_m != null && t.camera_calibrated === false;
   const dist = t?.target_dist_m != null ? `${t.target_dist_m} m` : "—";
   const gt = t?.gt_cm != null && t.gt_cm >= 0 ? `${(t.gt_cm / 100).toFixed(2)} m` : "—";
   const target =
@@ -50,7 +56,7 @@ export function TelemetryStrip({
       aria-live="polite"
     >
       <div className="grid grid-cols-3 gap-2">
-        <Stat k="Distance" v={dist} />
+        <Stat k="Distance" v={dist} warn={uncal ? "~ uncalibrated" : undefined} />
         <Stat k="Ground truth" v={gt} />
         <Stat k="Target" v={target} />
       </div>
@@ -63,6 +69,7 @@ export function TelemetryStrip({
           tone={t?.perception_available ? "ok" : "warn"}
         />
         {t?.eval_running && <Pill label="eval running — FPS may drop" tone="warn" />}
+        {t?.train_running && <Pill label="training running — FPS may drop" tone="warn" />}
       </div>
     </div>
   );
