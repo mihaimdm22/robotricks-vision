@@ -300,6 +300,13 @@ on every transport. Wire the BT module to the Mega's **Serial1** (USB stays free
 > HC-05 (Classic SPP) is the easiest: pair it once, point `--hw-port` at the Bluetooth
 > serial device, done — **zero firmware change**. Its factory baud is **9600** (not 115200).
 
+**Adafruit Motor Shield rig (the tested single-char firmware)** → the flashed sketch in
+`arduino/cat_ranger/cat_ranger.ino` speaks a discrete `b/f/h/j` command set (not `C/D`),
+so the host drives it through `CharBridge` (`catranger/hw/char_bridge.py`) with
+`--connection char --hw-port /dev/cu.HC-05... --baud 9600`. It streams the same `D <cm>`
+ground truth. Char-driven follow is coarse stop-and-go by design (90° turns, 400 ms
+nudges); see `docs/guides/arduino-bench-check.md` for the pre-demo rig checklist.
+
 **The HC-SR04 is your secret weapon:** ±1 cm ground truth, so on stage your model says
 "1.84 m" while the sensor confirms "1.86 m" — exactly the methodological rigor the How
 Far jury rewards. It also enforces a hard safe-distance stop in firmware.
