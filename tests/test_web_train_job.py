@@ -147,6 +147,46 @@ def test_cancel_terminates(tmp_path) -> None:
     assert history.read_index(base=tmp_path)[0]["status"] == "cancelled"
 
 
+def test_on_settle_and_on_progress_callbacks(tmp_path) -> None:
+    # WS-A7 unification: TrainJob fires on_progress per epoch tick + on_settle once at a
+    # terminal state, so the runtime records/heartbeats/settles it in the durable queue.
+    def fake(cmd, *, cwd, on_line, should_cancel):
+        on_line("  1/40 ...")
+        on_line("  2/40 ...")
+        return 0
+
+    settled: list[str] = []
+    ticks: list[tuple[int, int | None]] = []
+    job = TrainJob(runner=fake, history_base=tmp_path)
+    job.start(kind="train", on_settle=settled.append, on_progress=lambda e, t: ticks.append((e, t)))
+    assert _wait_state(job, "done")
+    deadline = time.time() + 2.0
+    while not settled and time.time() < deadline:
+        time.sleep(0.01)
+    assert settled == ["ok"]
+    assert ticks == [(1, 40), (2, 40)]
+
+
+def test_on_settle_fires_skipped_on_cancel(tmp_path) -> None:
+    def cancellable(cmd, *, cwd, on_line, should_cancel):
+        for _ in range(200):
+            if should_cancel():
+                return -15
+            time.sleep(0.01)
+        return 0
+
+    settled: list[str] = []
+    job = TrainJob(runner=cancellable, history_base=tmp_path)
+    job.start(kind="train", on_settle=settled.append)
+    assert _wait_state(job, "running")
+    job.cancel()
+    assert _wait_state(job, "cancelled")
+    deadline = time.time() + 2.0
+    while not settled and time.time() < deadline:
+        time.sleep(0.01)
+    assert settled == ["skipped"]  # cancelled ~ skipped for the durable queue
+
+
 def test_second_start_refused_while_running(tmp_path) -> None:
     release = threading.Event()
 

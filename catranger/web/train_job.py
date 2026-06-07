@@ -118,6 +118,10 @@ class TrainJob:
         self._error: str | None = None
         self._summary = ""
         self._result: dict[str, Any] | None = None
+        # WS-A7: durable-queue callbacks (same contract as EvalJob) so a web training run
+        # is recorded + heartbeated + settled in the live job queue, not just archived.
+        self._on_settle: Callable[[str], None] | None = None
+        self._on_progress: Callable[[int, int | None], None] | None = None
 
     # ----------------------------------------------------------------- control
     def start(
@@ -128,8 +132,14 @@ class TrainJob:
         epochs: int | None = None,
         device: str | None = None,
         source: str | None = None,
+        on_settle: Callable[[str], None] | None = None,
+        on_progress: Callable[[int, int | None], None] | None = None,
     ) -> bool:
-        """Start a run. Returns False if one is already running (caller nacks)."""
+        """Start a run. Returns False if one is already running (caller nacks).
+
+        `on_settle(status)` fires once at a terminal state ("ok"|"fail"|"skipped") and
+        `on_progress(epoch, total)` on each epoch tick — both WS-A7 durable-queue hooks,
+        set only when the run actually starts (a refused start never fires them)."""
         cmd = build_command(kind, config=config, epochs=epochs, device=device, source=source)
         with self._lock:
             if self._state == TrainState.RUNNING:
@@ -145,6 +155,8 @@ class TrainJob:
             self._error = None
             self._summary = ""
             self._result = None
+            self._on_settle = on_settle
+            self._on_progress = on_progress
         self._thread = threading.Thread(
             target=self._run, args=(cmd,), name="train-job", daemon=True
         )
@@ -178,6 +190,7 @@ class TrainJob:
             with self._lock:
                 self._state = TrainState.ERROR
                 self._error = f"{type(exc).__name__}: {exc}"
+            self._settle("fail")
             return
         secs = time.time() - t0
         cancelled = self._cancel.is_set()
@@ -204,6 +217,16 @@ class TrainJob:
             else:
                 self._state = TrainState.ERROR
                 self._error = f"training exited with code {rc}"
+        # WS-A7: settle the durable-queue row (cancelled ~ skipped, for the queue).
+        self._settle("skipped" if status == "cancelled" else status)
+
+    def _settle(self, status: str) -> None:
+        """Fire the durable-queue settle callback once, best-effort (never raises)."""
+        if self._on_settle is not None:
+            try:
+                self._on_settle(status)
+            except Exception:
+                pass
 
     def _collect_winner(
         self, kind: str, rc: int, status: str
@@ -263,11 +286,20 @@ class TrainJob:
             pass
 
     def _on_line(self, line: str) -> None:
+        progressed: tuple[int, int] | None = None
         with self._lock:
             self._log.append(line)
             ep = parse_epoch(line)
             if ep is not None:
                 self._epoch, self._total_epochs = ep
+                progressed = ep
+        # Heartbeat the durable-queue lease on epoch ticks (outside the lock; the
+        # runtime throttles it). Keeps a long training run from being reclaimed as stale.
+        if progressed is not None and self._on_progress is not None:
+            try:
+                self._on_progress(progressed[0], progressed[1])
+            except Exception:
+                pass
 
     # ----------------------------------------------------------------- readers
     def status(self) -> dict[str, Any]:

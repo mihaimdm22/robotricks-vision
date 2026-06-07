@@ -88,8 +88,8 @@ def _eval_err(code: str, problem: str, cause: str, fix: str, status: int = 400) 
 class RobotRuntime:
     # WS-A7: how often a running web eval refreshes its durable-queue lease. Well under
     # JobQueue's stale TTL (1800s) so a concurrent overnight recover_stale never reclaims a
-    # live web eval; throttled so we don't open a sqlite connection per processed frame.
-    _EVAL_HEARTBEAT_S = 60.0
+    # live heavy job; throttled so we don't open a sqlite connection per processed frame/epoch.
+    _HEAVY_HEARTBEAT_S = 60.0
 
     def __init__(self, web_cfg: dict | None = None, *, app_config: str = "cat_distance") -> None:
         cfg = web_cfg or {}
@@ -148,11 +148,12 @@ class RobotRuntime:
 
         # M3: one background eval job, started/polled from the Eval tab.
         self.eval_job = EvalJob()
-        # WS-A7: the durable-queue row id of the running web eval + its last heartbeat
-        # (monotonic). The eval worker refreshes the lease on progress ticks so a long
-        # eval is never reclaimed as "crashed" by another worker's TTL sweep.
-        self._eval_row_id: int | None = None
-        self._eval_hb_at = 0.0
+        # WS-A7: durable-queue row id of the running HEAVY web job (eval OR train — they
+        # share one slot via _heavy_lock) + its last heartbeat (monotonic). The worker
+        # refreshes the lease on progress ticks so a long job is never reclaimed as
+        # "crashed" by another worker's (e.g. overnight) TTL sweep.
+        self._heavy_row_id: int | None = None
+        self._heavy_hb_at = 0.0
         # CV/Training tab: one background training job (subprocess). Eval and train
         # are mutually exclusive — both saturate CPU/GPU (shared heavy-job slot).
         self.train_job = TrainJob()
@@ -174,31 +175,33 @@ class RobotRuntime:
             logging.getLogger("catranger.web").warning("jobqueue unavailable", exc_info=True)
             return None
 
-    def _record_eval(self, run_key: str, meta: dict) -> None:
-        self._eval_row_id = None
-        self._eval_hb_at = time.monotonic()  # row starts with a fresh heartbeat (record_running)
+    def _record_job(self, run_key: str, kind: str, meta: dict) -> None:
+        """Record a starting heavy web job (kind='web-eval' or 'web-train') in the durable
+        queue and remember its row id for heartbeats. Best-effort; never breaks the job."""
+        self._heavy_row_id = None
+        self._heavy_hb_at = time.monotonic()  # fresh heartbeat at record_running
         q = self._open_jobs()
         if q is None:
             return
         try:
-            self._eval_row_id = q.record_running("web-eval", meta, run_key)
+            self._heavy_row_id = q.record_running(kind, meta, run_key)
         except Exception:
             logging.getLogger("catranger.web").warning("jobqueue record failed", exc_info=True)
         finally:
             q.close()
 
-    def _heartbeat_eval(self) -> None:
-        """Refresh the running web eval's durable-queue lease (throttled to
-        ``_EVAL_HEARTBEAT_S``). Called from the eval worker thread on each progress tick so
-        a long eval keeps its heartbeat fresh and is never reclaimed as "crashed" by
+    def _heartbeat_job(self) -> None:
+        """Refresh the running heavy job's durable-queue lease (throttled to
+        ``_HEAVY_HEARTBEAT_S``). Called from the worker thread on each progress tick so a
+        long eval/train keeps its lease fresh and is never reclaimed as "crashed" by
         another worker's (e.g. overnight) TTL sweep. Best-effort; never raises."""
-        row_id = self._eval_row_id
+        row_id = self._heavy_row_id
         if row_id is None:
             return
         now = time.monotonic()
-        if now - self._eval_hb_at < self._EVAL_HEARTBEAT_S:
+        if now - self._heavy_hb_at < self._HEAVY_HEARTBEAT_S:
             return
-        self._eval_hb_at = now
+        self._heavy_hb_at = now
         q = self._open_jobs()
         if q is None:
             return
@@ -209,7 +212,7 @@ class RobotRuntime:
         finally:
             q.close()
 
-    def _settle_eval(self, run_key: str, status: str) -> None:
+    def _settle_job(self, run_key: str, status: str) -> None:
         q = self._open_jobs()
         if q is None:
             return
@@ -221,7 +224,7 @@ class RobotRuntime:
             q.close()
 
     def jobs_status(self, limit: int = 200) -> dict:
-        """Durable job-queue state — overnight sweeps (owner='overnight') AND web evals
+        """Durable job-queue state — overnight sweeps (owner='overnight') AND web eval/train
         (owner='web') — for the live sweep panel (WS-B3) and ops/curl. Read-only; empty
         (and creates nothing) until a sweep or eval has actually run."""
         from catranger.jobqueue import DEFAULT_DB_PATH
@@ -760,12 +763,14 @@ class RobotRuntime:
                     "wait for training to finish or cancel it, then run eval",
                     status=409,
                 )
-            self._record_eval(
-                run_key, {"source": source, "approach": str(params.get("approach", "A"))}
+            self._record_job(
+                run_key,
+                "web-eval",
+                {"source": source, "approach": str(params.get("approach", "A"))},
             )
             started = self.eval_job.start(
-                on_settle=lambda status: self._settle_eval(run_key, status),
-                on_progress=lambda done, total: self._heartbeat_eval(),
+                on_settle=lambda status: self._settle_job(run_key, status),
+                on_progress=lambda done, total: self._heartbeat_job(),
                 source=source,
                 config=self.app_config,
                 approach=str(params.get("approach", "A")),
@@ -779,7 +784,7 @@ class RobotRuntime:
                 out="outputs/report/web-eval.md",
             )
         if not started:
-            self._settle_eval(run_key, "skipped")  # busy: release the row we just recorded
+            self._settle_job(run_key, "skipped")  # busy: release the row we just recorded
             return _eval_err(
                 "eval_busy",
                 "an eval run is already in progress",
@@ -871,6 +876,10 @@ class RobotRuntime:
                 "set mode IDLE (or E-stop), then start training",
                 status=409,
             )
+        # WS-A7: record the training run in the durable queue (owner='web') so it shows
+        # in /api/jobs / `make jobs` alongside evals + sweeps, and an interrupted run is
+        # surfaced on restart. Recorded BEFORE start (inside the lock) like eval.
+        run_key = f"web-train-{kind}-{int(time.time() * 1000)}"
         # Atomic check-and-start under the shared heavy-job lock (TOCTOU fix).
         with self._heavy_lock:
             if self.eval_job.running:
@@ -881,14 +890,18 @@ class RobotRuntime:
                     "wait for eval to finish or cancel it, then train",
                     status=409,
                 )
+            self._record_job(run_key, "web-train", {"kind": kind, "config": config})
             started = self.train_job.start(
                 kind=kind,
                 config=config,
                 epochs=params.get("epochs"),
                 device=params.get("device"),
                 source=params.get("source"),
+                on_settle=lambda status: self._settle_job(run_key, status),
+                on_progress=lambda epoch, total: self._heartbeat_job(),
             )
         if not started:
+            self._settle_job(run_key, "skipped")  # busy: release the row we just recorded
             return _eval_err(
                 "train_busy",
                 "a training run is already in progress",
