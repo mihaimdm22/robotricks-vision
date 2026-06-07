@@ -184,6 +184,32 @@ cy=540`, 120° FOV, mounted ~30 cm off the floor. Two consequences we handle:
 Switch cameras with `--camera`. The Tapo C211 has different intrinsics → it is flagged
 `needs_calibration: true` and must be re-anchored before its distances are trusted.
 
+### Calibrating distance with the HC-SR04 (ground truth)
+
+Distance is `Z = fy · H_real / h_px`, so a wrong focal length `fy` scales **every** reading
+by a constant — calibration is all about anchoring `fy`. We anchor it against the rig's
+**HC-SR04 ultrasonic sensor**, which streams the true distance as `D <cm>` at ~20 Hz (±1 cm)
+over Bluetooth.
+
+1. **Anchor `fy` (one-shot).** Put an object of known real height `H_real` in view, read the
+   sonar's true distance `Z`, read the object's pixel height `h_px`, and solve
+   `fy = h_px · Z / H_real`:
+   ```bash
+   make calibrate H=0.297 Z=2.0 PX=240   # A4 sheet (0.297 m) at the sonar's 2.0 m, 240 px tall
+   ```
+   `scripts/calibrate_camera.py` writes the solved `fx=fy` into the camera YAML and flips
+   `needs_calibration: false`; re-select the profile in the console to re-anchor live. The
+   sonar just replaces a tape measure for `Z` — same role, ±1 cm instead of hand-measured.
+2. **Score it with a real MAE.** The provided stills ship unlabeled, so drop per-frame sonar
+   readings into the ground-truth sidecar (`configs/eval/how_far.gts.example.json` →
+   `data/eval/how_far.gts.json`, frame index → true meters) and `make eval … GTS=…` prints a
+   finite distance **MAE**. Live, it is the honesty cross-check the *How Far?* jury rewards:
+   the model says "1.84 m" while the sensor confirms "1.86 m".
+
+The HC-SR04 is **independent ground truth, not online sensor-fusion** — the per-frame estimate
+stays camera-only (geometry ⊕ depth). The sonar calibrates it, scores it, and (separately)
+enforces a hard safe-distance stop in firmware.
+
 ---
 
 ## Install
