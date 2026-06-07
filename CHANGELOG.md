@@ -2,6 +2,35 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.8.2] - 2026-06-07
+
+Demo-hardening release: console layout matches operator workflow, cat picker scales
+beyond six targets, robot link and sonar follow behave on the real rig, and the full
+test suite is green again.
+
+### Added
+- **Cat picker pagination** — six cards per page with Prev/Next on `:8080` static console
+  and Next.js `:3000/console`.
+- **Serial recovery helpers** — `serial_devices`, `serial_recovery`, and macOS Bluetooth
+  utilities for CharBridge bring-up; `link_config.h` for firmware tuning.
+- **Bluetooth-only guide** — `docs/guides/bluetooth-only.md` plus pairing cleanup script.
+
+### Changed
+- **Console layout** — **Rig sensors & peripherals** panel sits above **Cats in view**
+  on both static and Next.js consoles.
+- **Sonar follow** — control path can bias search using HC-SR04 ranging when the target
+  leaves frame.
+- **CharBridge** — optional `skip_boot` for tests; improved peripheral sync and search
+  threshold tuning.
+- **Tapo PTZ** — pan direction matches camera operator expectation (invert fix).
+
+### Fixed
+- **library_id flicker** — stable cat identity across overlay refreshes and catalog merges.
+- **CharBridge / web runtime tests** — race-safe distance reads and sticky sonar display
+  assertions (317 tests passing).
+- **Static console** — overlay smoothing, drive token handling, and layout regressions
+  from prior parity work.
+
 ## [0.8.1] - 2026-06-07
 
 Ship the full console experience for live cat tracking: saved cat library with face
