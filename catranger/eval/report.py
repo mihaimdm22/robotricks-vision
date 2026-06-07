@@ -13,6 +13,7 @@ Typical use from the eval script:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import time
 from pathlib import Path
@@ -340,6 +341,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--stride", type=int, default=1, help="frame stride (video/stream)")
     ap.add_argument("--max-frames", type=int, default=0, help="cap frames (0=all)")
     ap.add_argument("--out", default="outputs/report/report.md", help="report output path")
+    ap.add_argument(
+        "--metrics-json",
+        default=None,
+        help="also dump the structured metrics dict here (for run-history archival)",
+    )
     args = ap.parse_args(argv)
 
     print(
@@ -367,6 +373,22 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     metrics = out["metrics"]
+    if args.metrics_json:
+        mj = Path(args.metrics_json)
+        mj.parent.mkdir(parents=True, exist_ok=True)
+        mj.write_text(
+            json.dumps(
+                {
+                    "metrics": metrics,
+                    "n_frames": out["n_frames"],
+                    "approach": out["approach"],
+                    "report_path": out["report_path"],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"[eval] wrote metrics -> {mj}")
     print(
         f"[eval] {out['n_frames']} frames | "
         f"mean {float(metrics['fps'].get('mean_fps', 0.0)):.1f} FPS | wrote {out['report_path']}"
