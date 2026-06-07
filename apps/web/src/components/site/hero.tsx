@@ -6,9 +6,9 @@ import { LiveDistanceCard } from "./live-distance";
 export function Hero() {
   return (
     <section id="top" className="relative px-4 pt-32 sm:px-6 sm:pt-36 lg:pt-40">
-      <div className="mx-auto grid max-w-6xl items-center gap-12 lg:grid-cols-[1.05fr_1fr] lg:gap-10">
+      <div className="mx-auto grid max-w-6xl gap-12 lg:grid-cols-[1.05fr_1fr] lg:gap-10">
         {/* ---- left: message ---- */}
-        <div className="text-center lg:text-left">
+        <div className="text-center lg:pt-12 lg:text-left">
           <span className="chip">
             <span className="size-1.5 rounded-full bg-orange-bright" />
             {hero.eyebrow}
