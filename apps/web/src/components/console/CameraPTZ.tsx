@@ -16,11 +16,11 @@ import { api } from "@/lib/api";
 const STEP = 0.25;
 
 export function CameraPTZ({ telemetry }: { telemetry: Telemetry | null }) {
-  const enabled = telemetry?.camera_profile === "tapo_c211";
+  const enabled = Boolean(telemetry?.ptz_available);
   const reason = !telemetry
     ? "no telemetry"
     : !enabled
-      ? "pan/tilt needs the tapo_c211 camera profile"
+      ? "pan/tilt needs a Tapo RTSP URL (with Camera Account credentials)"
       : null;
 
   const nudge = (pan: number, tilt: number) => {

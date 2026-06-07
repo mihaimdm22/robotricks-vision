@@ -20,6 +20,7 @@ import type { StopReason } from "./stopReasons";
 /** WS-B0 overlay contract: one detection, coords NORMALIZED to [0,1] of the frame. */
 export type OverlayDet = {
   track_id: number | null;
+  known_track_ids?: number[];
   cls: string;
   xyxy_norm: [number, number, number, number];
   conf: number;
@@ -50,6 +51,7 @@ export type Telemetry = {
   n_cats: number;
   fps: number | null;
   target_id: number | null;
+  target_ids?: number[];
   target_dist_m: number | null;
   target_bearing_deg: number | null;
   gt_cm: number | null;
@@ -59,6 +61,7 @@ export type Telemetry = {
   camera: string;
   camera_profile: string | null;
   camera_calibrated: boolean;
+  ptz_available?: boolean;
   robot: string;
   frame_age_ms: number | null;
   video_stale_ms: number;

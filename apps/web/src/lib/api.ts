@@ -120,6 +120,15 @@ export type ModelInfo = {
   name: string;
   backend: string;
   dataset?: string;
+  notes?: string;
+  source?: string;
+  run_kind?: string;
+  trained_at?: string;
+  status?: string;
+  metric?: number | null;
+  metric_key?: string | null;
+  duration_s?: number | null;
+  summary?: string;
 };
 
 export type EvalMetrics = Record<string, Record<string, number | boolean | null>>;
@@ -158,6 +167,7 @@ export type CameraConnectResult = {
   warning?: string;
   camera_profile: string;
   calibrated: boolean;
+  ptz_available?: boolean;
 };
 
 // ---- training (CV tab) ----
@@ -213,7 +223,9 @@ export const api = {
   estop: () => post("/api/estop"),
   reset: () => post("/api/reset"),
   getModels: () =>
-    get<{ models: ModelInfo[]; active: string; status: string }>("/api/models"),
+    get<{ ok: true; models: ModelInfo[]; active: string; status: string }>(
+      "/api/models",
+    ),
   selectModel: (id: string) =>
     post<{ model: string; status: string; warning?: string }>("/api/models/select", { id }),
   connectCamera: (spec: string, camera?: CameraProfile) =>

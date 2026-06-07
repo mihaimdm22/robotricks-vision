@@ -55,7 +55,11 @@ Latch / clear the emergency stop. `estop` → `{ "ok": true, "estop": true }`; `
 ## REST — models
 
 ### `GET /api/models`
-→ `{ "models": [...], "active": "<id>", "status": "<model_status>" }`.
+→ `{ "ok": true, "models": [...], "active": "<id>", "status": "<model_status>" }`.
+
+Each model includes `id`, `name`, `backend`, `dataset`, plus run-history fields
+(`run_kind`, `trained_at`, `metric`, `metric_key`, `duration_s`, `summary`, `notes`)
+from `configs/models.yaml`. Weights paths are never exposed.
 
 ### `POST /api/models/select`
 ```json

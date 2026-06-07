@@ -47,8 +47,18 @@ export function TelemetryStrip({
   const uncal = t?.target_dist_m != null && t.camera_calibrated === false;
   const dist = t?.target_dist_m != null ? `${t.target_dist_m} m` : "—";
   const gt = t?.gt_cm != null && t.gt_cm >= 0 ? `${(t.gt_cm / 100).toFixed(2)} m` : "—";
+  const targetIds =
+    t?.target_ids && t.target_ids.length > 0
+      ? t.target_ids
+      : t?.target_id != null
+        ? [t.target_id]
+        : [];
   const target =
-    t?.target_id != null ? `id ${t.target_id}` : t?.n_cats ? `${t.n_cats} seen` : "none";
+    targetIds.length > 0
+      ? `id ${targetIds.join("/")}`
+      : t?.n_cats
+        ? `${t.n_cats} seen`
+        : "none";
 
   return (
     <div

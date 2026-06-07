@@ -40,7 +40,11 @@ export function ConnectionsTab() {
   const [discoverHint, setDiscoverHint] = useState<string | null>(null);
 
   async function connectCam() {
-    const r = await api.connectCamera(camSpec || "synthetic", camProfile);
+    const profile: CameraProfile = looksRtsp ? "tapo_c211" : camProfile;
+    if (looksRtsp && camProfile !== "tapo_c211") {
+      setCamProfile("tapo_c211");
+    }
+    const r = await api.connectCamera(camSpec || "synthetic", profile);
     if (r.ok) {
       // Uncalibrated intrinsics (placeholder distances) is a warn condition, not
       // a green ok — surface it WARN-toned so distance is never trusted blindly.
@@ -147,8 +151,8 @@ export function ConnectionsTab() {
         </div>
         {suggestTapo && (
           <div className="mt-2 text-xs text-warn">
-            This looks like an RTSP stream — the Tapo C211 needs the{" "}
-            <code className="font-mono">tapo_c211</code> profile for correct distances.
+            RTSP stream detected — use the <code className="font-mono">tapo_c211</code> profile
+            for pan/tilt and Tapo distance intrinsics (auto-selected on Connect).
           </div>
         )}
         <p className="mt-2 text-xs text-dim">

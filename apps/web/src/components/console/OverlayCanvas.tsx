@@ -153,7 +153,13 @@ function drawBadge(
 }
 
 function labelFor(d: OverlayDet, isTarget: boolean): string {
-  const id = d.track_id != null ? `#${d.track_id}` : "·";
+  const ids =
+    isTarget && d.known_track_ids && d.known_track_ids.length > 0
+      ? d.known_track_ids
+      : d.track_id != null
+        ? [d.track_id]
+        : [];
+  const id = ids.length ? `#${ids.join("/")}` : "·";
   if (!isTarget) return id; // keep non-targets quiet (hierarchy: the target is the story)
   const parts = [id];
   if (d.dist_m != null) {
