@@ -78,6 +78,32 @@ def _run(cmd: list[str], *, timeout: float = 300) -> tuple[int, str]:
     return proc.returncode, combined[-8000:]
 
 
+def _upload_problem_from_log(log: str, *, port: str | None) -> tuple[str, str]:
+    """Turn arduino-cli upload stderr into an operator-facing problem + fix."""
+    lower = log.lower()
+    port_hint = port or "the Arduino USB port"
+    if "resource busy" in lower or "could not open port" in lower or "access is denied" in lower:
+        return (
+            "upload failed — the serial port is still in use",
+            "click Disconnect on the robot link (or wait for flash to release it), "
+            f"then retry on {port_hint}",
+        )
+    if "no such file" in lower and ("/dev/" in lower or "com" in lower):
+        return (
+            "upload failed — USB port not found",
+            f"scan USB ports again and pick the live device ({port_hint})",
+        )
+    if "programmer is not responding" in lower or "not in sync" in lower:
+        return (
+            "upload failed — Arduino did not enter bootloader",
+            "unplug/replug the Mega USB cable, pick the port again, and retry",
+        )
+    return (
+        "upload failed — is the Mega plugged in via USB?",
+        "pick the USB serial port from Scan devices, or pass -p /dev/ttyACM0",
+    )
+
+
 def _ensure_toolchain(cli: str) -> tuple[bool, str]:
     steps: list[list[str]] = [
         [cli, "core", "install", _CORE],
@@ -136,11 +162,12 @@ def flash_sketch(
     rc, out = _run(upload_cmd, timeout=120)
     logs.append(f"$ {' '.join(upload_cmd)}\n{out}")
     if rc != 0:
+        problem, fix = _upload_problem_from_log(out, port=port)
         return {
             "ok": False,
             "code": "flash_upload_failed",
-            "problem": "upload failed — is the Mega plugged in via USB?",
-            "fix": "pick the USB serial port from Scan devices, or pass -p /dev/ttyACM0",
+            "problem": problem,
+            "fix": fix,
             "log": "\n".join(logs),
             "port": port,
         }

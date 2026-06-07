@@ -60,6 +60,11 @@ class CatLibraryStore:
             out.append(self._row_to_summary(row))
         return out
 
+    def count(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) AS n FROM cats").fetchone()
+        return int(row["n"]) if row else 0
+
     def get(self, cat_id: int) -> dict[str, Any] | None:
         with self._lock:
             row = self._conn.execute(

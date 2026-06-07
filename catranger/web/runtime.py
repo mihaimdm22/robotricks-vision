@@ -110,9 +110,11 @@ class RobotRuntime:
         self.height = int(cfg.get("height", 540))
         self.app_config = app_config
 
+        sonar_cfg = dict(cfg.get("sonar", {}) or {})
         self.controller = RobotController(
             watchdog_timeout_s=float(cfg.get("watchdog_timeout_s", 0.5)),
             safe_stop_cm=int(cfg.get("safe_stop_cm", 20)),
+            sonar_baseline_m=float(sonar_cfg.get("baseline_m", 0.09)),
         )
         self._models_config = str(cfg.get("models_config", "configs/models.yaml"))
         self.registry = ModelRegistry.from_yaml(self._models_config)
@@ -136,6 +138,7 @@ class RobotRuntime:
         self._last_ptz_ts = 0.0
         self._ptz_min_interval = float(cfg.get("ptz_min_interval_s", 0.3))
         self.robot_desc = "dummy"
+        self._robot_link_verified = False
 
         self._jpeg: bytes | None = None
         self._jpeg_lock = threading.Lock()
@@ -165,6 +168,7 @@ class RobotRuntime:
         lib_db = str(cfg.get("cat_library_db", "outputs/cat_library.sqlite3"))
         self.cat_library = CatLibraryStore(lib_db)
         self._tracker_to_library: dict[int, int] = {}
+        self._library_count = self.cat_library.count()
         self._find_library_id: int | None = None
         self._find_library_name: str | None = None
         self._match_threshold = float(cfg.get("cat_match_threshold", 0.55))
@@ -410,6 +414,9 @@ class RobotRuntime:
             card["in_view"] = True
             tid = int(card["id"])
             live_ids.add(tid)
+            lib_id = self._tracker_to_library.get(tid)
+            if lib_id is not None:
+                card["library_id"] = lib_id
             self._session_seen[tid] = dict(card)
             if encode_thumbs and card.get("thumb_jpeg_b64"):
                 self._register_library_sighting(card)
@@ -424,6 +431,9 @@ class RobotRuntime:
             off["is_preferred"] = self._preferred_target_id is not None and tid == int(
                 self._preferred_target_id
             )
+            lib_id = self._tracker_to_library.get(tid)
+            if lib_id is not None:
+                off["library_id"] = lib_id
             merged[tid] = off
 
         self._cat_catalog = sorted(
@@ -453,6 +463,7 @@ class RobotRuntime:
         )
         self._tracker_to_library[tid] = lib_id
         card["library_id"] = lib_id
+        self._library_count = self.cat_library.count()
 
     def _try_match_library_target(self, frame: np.ndarray, result: FrameResult) -> None:
         if self._find_library_id is None or self._ranger is None:
@@ -540,7 +551,10 @@ class RobotRuntime:
         gt_cm = int(gt) if isinstance(gt, int) else None
         if gt_cm is not None and gt_cm >= 0:
             self._sonar_display_cm = gt_cm
-        display_cm = gt_cm if gt_cm is not None and gt_cm >= 0 else self._sonar_display_cm
+        if self._robot_link_verified:
+            display_cm = gt_cm if gt_cm is not None and gt_cm >= 0 else self._sonar_display_cm
+        else:
+            display_cm = gt_cm if gt_cm is not None and gt_cm >= 0 else None
         bridge = self.controller._bridge
         periph = (
             bridge.periph_state()
@@ -562,6 +576,7 @@ class RobotRuntime:
                 "camera_calibrated": self.camera_calibrated,
                 "ptz_available": self._tapo is not None,
                 "robot": self.robot_desc,
+                "link_verified": self._robot_link_verified,
                 "frame_age_ms": round(age_ms, 1) if age_ms is not None else None,
                 "target_dist_lo": self._last_dist[1],
                 "target_dist_hi": self._last_dist[2],
@@ -591,7 +606,8 @@ class RobotRuntime:
                     and 0 <= display_cm <= BUZZER_FAR_CM
                 ),
                 "preferred_target_id": self._preferred_target_id,
-                "cats": self._cat_catalog,
+                "cats": [{k: v for k, v in c.items() if k != "_xyxy"} for c in self._cat_catalog],
+                "library_count": self._library_count,
                 "find_library_id": self._find_library_id,
                 "find_library_name": self._find_library_name,
             }
@@ -815,23 +831,152 @@ class RobotRuntime:
 
     def connect_robot(self, connection: str, target: str | None = None, baud: int = 115200) -> dict:
         from catranger.hw.bluetooth import open_link
+        from catranger.hw.serial_bridge import DummyBridge
 
-        bridge = open_link(connection, target, baud=baud)
+        conn = (connection or "dummy").lower()
+        target = (target or "").strip() or None
+        use_strict = conn not in ("dummy", "") and bool(target)
+
+        # Re-connecting to the same BT/USB port: close the old holder first or
+        # pyserial raises "Resource busy" and the UI falls back to simulation.
+        if use_strict:
+            self.controller.attach(bridge=DummyBridge())
+            time.sleep(0.4)
+
+        try:
+            bridge = open_link(connection, target, baud=baud, strict=use_strict)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "code": "robot_connect_failed",
+                "problem": str(exc),
+                "fix": self._robot_connect_fix(conn, target, exc),
+            }
+
         self.controller.attach(bridge=bridge)
         cls = type(bridge).__name__
         self.robot_desc = f"{connection}:{target}" if target else connection
-        # open_link silently degrades to DummyBridge if a transport is unavailable —
-        # surface that as a warning, never a green "connected" (DX review).
-        wanted_real = connection not in ("dummy", "") and target is not None
-        fell_back = wanted_real and cls == "DummyBridge"
+
+        link_verified: bool | None = None
+        warning: str | None = None
+        if cls == "CharBridge" and self.controller.robot_connected:
+            hybrid_via = getattr(bridge, "telemetry_port", None)
+            if hybrid_via and hybrid_via != target:
+                self.robot_desc = f"bt:{target} + telem:{hybrid_via}"
+            link_verified = self._verify_robot_link(bridge)
+            if link_verified and hybrid_via and hybrid_via != target:
+                warning = (
+                    "macOS HC-06 receive path is silent — drive commands go over Bluetooth, "
+                    f"sonar telemetry over USB ({hybrid_via}). This is normal on Mac + HC-06."
+                )
+            elif not link_verified:
+                self._sonar_display_cm = None
+                if conn == "bt":
+                    from catranger.hw.macos_bt import (
+                        hybrid_telemetry_port,
+                        verify_bt_command_tx,
+                    )
+
+                    usb_echo = hybrid_telemetry_port(target)
+                    if verify_bt_command_tx(target or "", usb_echo):
+                        link_verified = True
+                        warning = (
+                            "Bluetooth commands reach the robot, but this Mac cannot read "
+                            "HC-06 telemetry. Plug Mega USB for hybrid sonar, or use USB "
+                            "for full control. HC-06 allows one phone link — quit phone "
+                            "Serial Terminal when testing from the Mac."
+                        )
+                    else:
+                        discovered = self.discover_devices()
+                        usb = [p["target"] for p in discovered.get("serial", [])]
+                        power = (
+                            " Plug the Mega USB into this Mac for hybrid mode (BT drive + "
+                            "USB sonar)."
+                            if not usb
+                            else ""
+                        )
+                        warning = (
+                            "Bluetooth port is open but this Mac reads 0 bytes from the "
+                            "Mega and could not confirm commands. Phone Serial Terminal "
+                            "showing D129 means robot wiring is OK — quit the phone app "
+                            "(HC-06 allows one link), confirm the Mega is powered."
+                            + power
+                            + " Reconnect HC-06 in System Settings → Bluetooth, then "
+                            "Disconnect/Connect here. Or use USB / HM-10 BLE."
+                        )
+                else:
+                    warning = (
+                        "Serial port opened but no D distance lines yet — Mega must be "
+                        "powered and running cat_ranger @ 9600."
+                    )
+
+        self._robot_link_verified = bool(link_verified) if cls == "CharBridge" else False
+
+        usb_fallback: str | None = None
+        if conn == "bt" and not link_verified:
+            for entry in self.discover_devices().get("serial", []):
+                tgt = str(entry.get("target") or "")
+                if tgt and "HC-06" not in tgt and "HC-05" not in tgt:
+                    usb_fallback = tgt
+                    break
+
         return {
             "ok": True,
             "bridge": cls,
             "connected": self.controller.robot_connected,
-            "warning": "robot link unavailable — running in simulation (DummyBridge)"
-            if fell_back
-            else None,
+            "link_verified": link_verified,
+            "warning": warning,
+            "usb_fallback": usb_fallback,
+            "hybrid_telemetry": getattr(bridge, "telemetry_port", None),
         }
+
+    @staticmethod
+    def _verify_robot_link(bridge: object) -> bool:
+        """True when firmware is replying with D <cm> telemetry on the open link."""
+        try:
+            bridge.send_raw("b")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        deadline = time.monotonic() + 2.5
+        while time.monotonic() < deadline:
+            try:
+                cm = bridge.read_distance_cm()  # type: ignore[attr-defined]
+            except Exception:
+                cm = None
+            if cm is not None:
+                return True
+            time.sleep(0.05)
+        return False
+
+    @staticmethod
+    def _robot_connect_fix(connection: str, target: str | None, exc: Exception) -> str:
+        msg = str(exc).lower()
+        if connection == "bt":
+            if target and "bluetooth-incoming" in target.lower():
+                return (
+                    "Bluetooth-Incoming-Port is not the HC-05/HC-06 — pair the module in "
+                    "System Settings → Bluetooth, then pick /dev/cu.HC-06 from Scan."
+                )
+            if "no such file" in msg or "could not open port" in msg or "fileno" in msg:
+                return (
+                    "HC-06 serial port missing — pair in macOS Bluetooth, then Scan for "
+                    "/dev/cu.HC-06 at 9600 baud."
+                )
+            if "busy" in msg or "resource" in msg or "lock" in msg:
+                return "Port busy — click Disconnect, wait a second, then Connect again."
+            return (
+                "HC-06 paired but Mac sees no D telemetry — the robot side may be fine "
+                "(phone Serial Terminal shows D129). HC-06 allows ONE connection: close "
+                "the phone BT terminal, System Settings → Bluetooth → disconnect/reconnect "
+                "HC-06, then Connect here @ 9600. Run: python scripts/verify_bt_link.py "
+                f"--port {target or '/dev/cu.HC-06'}"
+            )
+        if connection == "usb":
+            if "no such file" in msg or "could not open port" in msg:
+                return "USB port missing — plug Mega into this Mac and Scan (cu.usbserial-*)."
+            if "busy" in msg or "resource" in msg:
+                return "USB port busy — wait for flash to finish or disconnect first."
+        return "Check port path, baud (9600 for HC-05), and that nothing else holds the port."
 
     # ------------------------------------------------------------- models
     def select_model(self, model_id: str) -> dict:
@@ -1221,6 +1366,8 @@ class RobotRuntime:
             }
         # Release the serial port before arduino-cli upload grabs it.
         self.connect_robot("dummy")
+        # macOS /dev/cu.* can take a moment to unlock after pyserial close().
+        time.sleep(0.4)
         started = self.flash_job.start(port or None)
         if not started:
             return {
@@ -1239,22 +1386,24 @@ class RobotRuntime:
         """Best-effort device discovery for the Connections tab: serial ports
         always, BLE only if bleak is installed. Never raises — an empty list with
         a hint beats a traceback."""
-        serial_ports: list[dict] = []
-        try:
-            from serial.tools import list_ports
+        from catranger.hw.serial_discovery import (
+            arduino_ports,
+            bluetooth_spp_ports,
+            discover_hint,
+            list_serial_ports,
+        )
 
-            serial_ports = [
-                {"target": p.device, "label": p.description or p.device}
-                for p in list_ports.comports()
-            ]
-        except Exception:  # pyserial absent or platform quirk
-            serial_ports = []
+        serial_ports = list_serial_ports()
+        candidates = arduino_ports(serial_ports)
+        bt_candidates = bluetooth_spp_ports(serial_ports)
         ble_available = importlib.util.find_spec("bleak") is not None
         return {
             "ok": True,
-            "serial": serial_ports,
+            "serial": candidates,
+            "bluetooth_spp": bt_candidates,
+            "all_serial": serial_ports,
             "ble_available": ble_available,
-            "hint": None if serial_ports else "no serial ports found — plug in the USB/BT adapter",
+            "hint": discover_hint(serial_ports),
         }
 
     # one-shot estop/reset proxies so the server never reaches past this facade

@@ -98,6 +98,112 @@ def test_build_cat_catalog_synthesizes_known_id_without_previous() -> None:
     assert 7 in ids
 
 
+def test_build_cat_catalog_keeps_thumb_when_bbox_stable() -> None:
+    """Re-encoding every catalog tick changes JPEG bytes and flickers the UI."""
+    import cv2
+
+    frame = np.zeros((120, 160, 3), dtype=np.uint8)
+    cv2.rectangle(frame, (20, 20), (80, 100), (0, 255, 0), -1)
+    det = Detection(xyxy=(20.0, 20.0, 80.0, 100.0), conf=0.88, cls_id=15, track_id=7)
+    dist = DistanceResult(meters=1.2, lo=1.0, hi=1.4, method="geometry", components={})
+    obs = CatObservation(detection=det, distance=dist, bearing_deg=5.0, speed_mps=None)
+    result = FrameResult(
+        frame_index=1,
+        observations=[obs],
+        width=160,
+        height=120,
+        target_observation=obs,
+        target_known_ids=[7],
+    )
+    first = build_cat_catalog(frame, result, locked_id=7, preferred_id=7)
+    assert first[0]["thumb_jpeg_b64"] is not None
+    prev = first
+    # Tiny jitter (< 10 px center shift) should keep the same thumbnail bytes.
+    det_jitter = Detection(xyxy=(21.0, 21.0, 81.0, 101.0), conf=0.88, cls_id=15, track_id=7)
+    obs_jitter = CatObservation(
+        detection=det_jitter, distance=dist, bearing_deg=5.0, speed_mps=None
+    )
+    result_jitter = FrameResult(
+        frame_index=2,
+        observations=[obs_jitter],
+        width=160,
+        height=120,
+        target_observation=obs_jitter,
+        target_known_ids=[7],
+    )
+    second = build_cat_catalog(frame, result_jitter, locked_id=7, preferred_id=7, previous=prev)
+    assert second[0]["thumb_jpeg_b64"] == first[0]["thumb_jpeg_b64"]
+
+
+def test_build_cat_catalog_refreshes_thumb_when_bbox_moves() -> None:
+    import cv2
+
+    frame = np.zeros((120, 160, 3), dtype=np.uint8)
+    cv2.rectangle(frame, (20, 20), (80, 100), (0, 255, 0), -1)
+    det = Detection(xyxy=(20.0, 20.0, 80.0, 100.0), conf=0.88, cls_id=15, track_id=7)
+    dist = DistanceResult(meters=1.2, lo=1.0, hi=1.4, method="geometry", components={})
+    obs = CatObservation(detection=det, distance=dist, bearing_deg=5.0, speed_mps=None)
+    result = FrameResult(
+        frame_index=1,
+        observations=[obs],
+        width=160,
+        height=120,
+        target_observation=obs,
+        target_known_ids=[7],
+    )
+    first = build_cat_catalog(frame, result, locked_id=7, preferred_id=7)
+    det_moved = Detection(xyxy=(40.0, 40.0, 100.0, 110.0), conf=0.88, cls_id=15, track_id=7)
+    obs_moved = CatObservation(detection=det_moved, distance=dist, bearing_deg=5.0, speed_mps=None)
+    result_moved = FrameResult(
+        frame_index=2,
+        observations=[obs_moved],
+        width=160,
+        height=120,
+        target_observation=obs_moved,
+        target_known_ids=[7],
+    )
+    second = build_cat_catalog(frame, result_moved, locked_id=7, preferred_id=7, previous=first)
+    assert second[0]["thumb_jpeg_b64"] is not None
+    assert second[0]["thumb_jpeg_b64"] != first[0]["thumb_jpeg_b64"]
+
+
+def test_build_cat_catalog_preserves_library_id_from_previous() -> None:
+    """library_id must survive catalog rebuilds between thumb-encode ticks."""
+    prev = [
+        {
+            "id": 7,
+            "conf": 0.9,
+            "dist_m": 1.2,
+            "bearing_deg": 0.0,
+            "is_locked": True,
+            "is_preferred": True,
+            "thumb_jpeg_b64": "abc",
+            "library_id": 42,
+            "area": 1000.0,
+        }
+    ]
+    dist = DistanceResult(meters=1.0, lo=0.9, hi=1.1, method="geometry", components={})
+    obs = CatObservation(detection=_det(7, 400), distance=dist, bearing_deg=0.0, speed_mps=None)
+    result = FrameResult(
+        frame_index=5,
+        observations=[obs],
+        target_observation=obs,
+        target_known_ids=[7],
+        width=640,
+        height=480,
+    )
+    cards = build_cat_catalog(
+        None,
+        result,
+        locked_id=7,
+        preferred_id=7,
+        previous=prev,
+        encode_thumbs=False,
+    )
+    assert len(cards) == 1
+    assert cards[0]["library_id"] == 42
+
+
 def test_build_cat_catalog_keeps_known_id_from_previous() -> None:
     """Brief dropout must not empty the picker while tracker still knows the id."""
     prev = [

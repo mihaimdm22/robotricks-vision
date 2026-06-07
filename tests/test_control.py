@@ -6,7 +6,7 @@ deterministic (the reason control.Follower takes a `clock` argument).
 
 from __future__ import annotations
 
-from catranger.control import Follower
+from catranger.control import Follower, enrich_result_sonar_distance
 from catranger.types import CatObservation, Detection, DistanceResult, FrameResult
 
 
@@ -106,3 +106,22 @@ def test_commands_clamped_and_slew_limited() -> None:
         assert abs(cmd.rotation - prev_rot) <= 0.15 + 1e-9
         assert abs(cmd.v_fwd - prev_v) <= 0.15 + 1e-9
         prev_rot, prev_v = cmd.rotation, cmd.v_fwd
+
+
+def test_enrich_result_sonar_fills_missing_vision_distance() -> None:
+    import math
+
+    det = Detection(
+        xyxy=(900.0, 400.0, 1020.0, 580.0), conf=0.9, cls_id=15, cls_name="cat", track_id=1
+    )
+    dist = DistanceResult(meters=float("nan"), lo=0.0, hi=0.0, method="geometry")
+    obs = CatObservation(detection=det, distance=dist, bearing_deg=0.0)
+    frame = FrameResult(frame_index=0, observations=[obs], target_observation=obs)
+    enriched = enrich_result_sonar_distance(frame, gt_cm=125, baseline_m=0.09)
+    assert enriched.target is not None
+    assert enriched.target.distance is not None
+    assert math.isfinite(enriched.target.distance.meters)
+    assert enriched.target.distance.method == "sonar"
+    f = Follower({})
+    cmd = f.step(enriched)
+    assert cmd.state in ("ACQUIRE", "TRACK", "SAFE")

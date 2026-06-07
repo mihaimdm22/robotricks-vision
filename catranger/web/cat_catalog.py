@@ -11,6 +11,25 @@ import numpy as np
 from catranger.types import CatObservation, FrameResult
 
 
+def _bbox_center(xyxy: tuple[float, float, float, float]) -> tuple[float, float]:
+    x1, y1, x2, y2 = xyxy
+    return ((x1 + x2) * 0.5, (y1 + y2) * 0.5)
+
+
+def _bbox_moved_enough(
+    xyxy: tuple[float, float, float, float],
+    prev_xyxy: tuple[float, float, float, float] | None,
+    *,
+    min_shift_px: float = 10.0,
+) -> bool:
+    if prev_xyxy is None:
+        return True
+    cx, cy = _bbox_center(xyxy)
+    px, py = _bbox_center(prev_xyxy)
+    dx, dy = cx - px, cy - py
+    return (dx * dx + dy * dy) ** 0.5 >= min_shift_px
+
+
 def _obs_to_card(
     obs: CatObservation,
     *,
@@ -19,6 +38,7 @@ def _obs_to_card(
     locked_id: int | None,
     preferred_id: int | None,
     prev_thumb: str | None,
+    prev_xyxy: tuple[float, float, float, float] | None,
     encode_thumbs: bool,
 ) -> dict[str, Any] | None:
     tid = obs.detection.track_id
@@ -29,8 +49,20 @@ def _obs_to_card(
     if obs.distance is not None and math.isfinite(obs.distance.meters):
         dist_m = round(float(obs.distance.meters), 2)
     thumb_b64 = prev_thumb
-    if encode_thumbs and frame_bgr is not None:
-        thumb_b64 = _crop_thumb_b64(frame_bgr, obs.detection.xyxy, thumb_px) or prev_thumb
+    xyxy_raw = obs.detection.xyxy
+    xyxy: tuple[float, float, float, float] = (
+        float(xyxy_raw[0]),
+        float(xyxy_raw[1]),
+        float(xyxy_raw[2]),
+        float(xyxy_raw[3]),
+    )
+    refresh_thumb = (
+        encode_thumbs
+        and frame_bgr is not None
+        and (not prev_thumb or _bbox_moved_enough(xyxy, prev_xyxy))
+    )
+    if refresh_thumb and frame_bgr is not None:
+        thumb_b64 = _crop_thumb_b64(frame_bgr, xyxy, thumb_px) or prev_thumb
     return {
         "id": tid,
         "conf": round(float(obs.detection.conf), 2),
@@ -40,7 +72,16 @@ def _obs_to_card(
         "is_preferred": preferred_id is not None and tid == int(preferred_id),
         "thumb_jpeg_b64": thumb_b64,
         "area": float(obs.detection.area),
+        "_xyxy": xyxy,
     }
+
+
+def _merge_prev_card_fields(card: dict[str, Any], prev: dict[str, Any] | None) -> None:
+    """Carry stable client fields across catalog rebuilds (avoid UI flicker)."""
+    if not prev:
+        return
+    if prev.get("library_id") is not None and card.get("library_id") is None:
+        card["library_id"] = prev["library_id"]
 
 
 def build_cat_catalog(
@@ -75,14 +116,16 @@ def build_cat_catalog(
             locked_id=locked_id,
             preferred_id=preferred_id,
             prev_thumb=(prev or {}).get("thumb_jpeg_b64") if prev else None,
+            prev_xyxy=(prev or {}).get("_xyxy") if prev else None,
             encode_thumbs=encode_thumbs,
         )
         if card is not None:
+            _merge_prev_card_fields(card, prev)
             cards_by_id[card["id"]] = card
 
     def synthetic_card(tid: int) -> dict[str, Any]:
         old = prev_by_id.get(tid) or {}
-        return {
+        card = {
             "id": tid,
             "conf": round(float(old.get("conf", 0.0)), 2),
             "dist_m": old.get("dist_m"),
@@ -92,6 +135,9 @@ def build_cat_catalog(
             "thumb_jpeg_b64": old.get("thumb_jpeg_b64"),
             "area": float(old.get("area", 0.0)),
         }
+        if old.get("library_id") is not None:
+            card["library_id"] = old["library_id"]
+        return card
 
     for obs in result.observations:
         ingest(obs)
@@ -111,6 +157,7 @@ def build_cat_catalog(
             old["is_preferred"] = preferred_id is not None and kid == int(preferred_id)
             if "area" not in old:
                 old["area"] = 0.0
+            _merge_prev_card_fields(old, prev_by_id.get(kid))
             cards_by_id[kid] = old
         else:
             cards_by_id[kid] = synthetic_card(kid)

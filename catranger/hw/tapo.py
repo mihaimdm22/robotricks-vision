@@ -71,7 +71,8 @@ class _OnvifPtz:
         assert self._ptz is not None and self._profile_token is not None
         req = self._ptz.create_type("RelativeMove")
         req.ProfileToken = self._profile_token
-        req.Translation = {"PanTilt": {"x": pan * _PTZ_STEP_SCALE, "y": tilt * _PTZ_STEP_SCALE}}
+        # Tapo C211 ONVIF pan axis is mirrored vs our API (+pan = right).
+        req.Translation = {"PanTilt": {"x": -pan * _PTZ_STEP_SCALE, "y": tilt * _PTZ_STEP_SCALE}}
         self._ptz.RelativeMove(req)
 
     def preset(self, name: str) -> None:

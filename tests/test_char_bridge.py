@@ -6,6 +6,8 @@ is exercised here with an injected clock + a fake serial transport — no hardwa
 
 from __future__ import annotations
 
+import time
+
 from catranger.hw.bluetooth import open_link
 from catranger.hw.char_bridge import CharBridge
 from catranger.hw.serial_bridge import DummyBridge
@@ -52,6 +54,18 @@ class FakeSerial:
 
 def _bridge(clk: FakeClock, ser: FakeSerial | None = None, **kw) -> CharBridge:
     return CharBridge(transport=ser, clock=clk, **kw)
+
+
+def _read_distance_when(b: CharBridge, expected: int, *, attempts: int = 50) -> int:
+    """Poll read_distance_cm until the background RX thread delivers *expected*."""
+    last: int | None = None
+    for _ in range(attempts):
+        last = b.read_distance_cm()
+        if last == expected:
+            return last
+        time.sleep(0.002)
+    assert last == expected
+    return last  # pragma: no cover
 
 
 # 1) Quantization table -------------------------------------------------------
@@ -138,7 +152,7 @@ def test_read_distance_parses_latest_and_passes_minus_one() -> None:
     b = _bridge(clk, ser)
     assert b.read_distance_cm() == 184  # most recent complete line
     ser.feed(b"D -1\n")
-    assert b.read_distance_cm() == -1  # no-echo sentinel passes through
+    assert _read_distance_when(b, -1) == -1  # no-echo sentinel passes through
 
 
 def test_read_distance_partial_line_returns_none_then_completes() -> None:
@@ -147,7 +161,7 @@ def test_read_distance_partial_line_returns_none_then_completes() -> None:
     b = _bridge(clk, ser)
     assert b.read_distance_cm() is None
     ser.feed(b"9\n")  # completes "D 99\n"
-    assert b.read_distance_cm() == 99
+    assert _read_distance_when(b, 99) == 99
 
 
 def test_read_distance_skips_non_d_chatter() -> None:
@@ -230,6 +244,15 @@ def test_close_without_transport_is_safe() -> None:
     assert b.sent[-1] == "b"
 
 
+def test_search_state_turns_at_lower_threshold() -> None:
+    """SEARCH sweep uses rotation ~0.3; search_rot_thresh must be below that."""
+    clk = FakeClock()
+    b = _bridge(clk, search_rot_thresh=0.25)
+    b.send(Command(rotation=0.3, state="SEARCH"))  # bootstrap 'b'
+    clk.advance(0.6)
+    assert b.send(Command(rotation=0.3, state="SEARCH")) == "j"
+
+
 # 7) open_link selection + graceful degrade -----------------------------------
 def test_open_link_char_without_target_is_dummy() -> None:
     link = open_link("char", None)
@@ -246,7 +269,7 @@ def test_open_link_char_bad_port_degrades_to_dummy() -> None:
 def test_send_raw_toggles_buzzer_and_tracks_state() -> None:
     clk = FakeClock()
     ser = FakeSerial()
-    b = _bridge(clk, ser)
+    b = _bridge(clk, ser, skip_boot=True)
     assert b.periph_state()["buzzer"] is True
     assert b.send_raw("c") == "c"
     assert b.periph_state()["buzzer"] is False
@@ -264,10 +287,26 @@ def test_send_raw_all_off() -> None:
 
 def test_sync_target_writes_i_line_once() -> None:
     ser = FakeSerial()
-    b = _bridge(FakeClock(), ser)
+    b = _bridge(FakeClock(), ser, skip_boot=True)
     b.sync_target(3, [3, 7])
     assert ser.written == b"I3/7\n"
     b.sync_target(3, [3, 7])
     assert ser.written == b"I3/7\n"
     b.sync_target(None, None)
     assert ser.written == b"I3/7\nI-\n"
+
+
+def test_hybrid_reads_telemetry_from_sidecar() -> None:
+    clk = FakeClock()
+    cmd = FakeSerial()
+    telem = FakeSerial(rx=b"D 42\n")
+    b = CharBridge(
+        transport=cmd,
+        telemetry_transport=telem,
+        telemetry_port="/dev/cu.usbserial-TEST",
+        port="/dev/cu.HC-06",
+        clock=clk,
+    )
+    assert b.read_distance_cm() == 42
+    assert b.send(Command(v_fwd=0.0, state="IDLE")) == ""
+    assert cmd.written == b"b"  # hybrid boot uses manual stop on command link

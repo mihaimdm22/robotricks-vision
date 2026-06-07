@@ -39,6 +39,7 @@ def test_cat_library_upsert_and_list(tmp_path) -> None:
     assert detail is not None and detail["name"] == "Mittens"
     assert store.delete(cid)
     assert store.get(cid) is None
+    assert store.count() == 0
     store.close()
 
 
