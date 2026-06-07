@@ -4,8 +4,8 @@
 #   python scripts/calibrate_camera.py --camera tapo_c211 \
 #       --known-height-m 0.297 --distance-m 2.00 --pixel-height-px <h_px>
 name: tapo_c211
-fx: 672.2              # FOV-derived @ 110° HFOV (1920×1080)
-fy: 672.2
+fx: 642.7  # sonar-calibrated (baseline=0.090m, scale=0.1594, n=22)
+fy: 642.7
 cx: 960.0
 cy: 540.0
 width: 1920

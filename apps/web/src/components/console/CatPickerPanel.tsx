@@ -5,7 +5,7 @@
  * onto it; "Auto" clears the lock (largest box wins).
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CatCard, Telemetry } from "@/lib/useTelemetry";
 import { ControlTip, SectionTitle } from "./help";
 
@@ -56,6 +56,8 @@ function mergeCatCards(telemetry: Telemetry | null): CatCard[] {
   return [...byId.values()].sort((a, b) => b.conf - a.conf);
 }
 
+const CAT_PAGE_SIZE = 6;
+
 export function CatPickerPanel({
   telemetry,
   send,
@@ -68,6 +70,18 @@ export function CatPickerPanel({
   onOpenLibrary?: () => void;
 }) {
   const cats = useMemo(() => mergeCatCards(telemetry), [telemetry]);
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(cats.length / CAT_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageCats = cats.slice(
+    safePage * CAT_PAGE_SIZE,
+    safePage * CAT_PAGE_SIZE + CAT_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setPage((p) => Math.min(p, Math.max(0, pageCount - 1)));
+  }, [pageCount]);
+
   const preferred = telemetry?.preferred_target_id ?? null;
   const locked = telemetry?.target_id ?? null;
   const perception = telemetry?.perception_available !== false;
@@ -120,7 +134,7 @@ export function CatPickerPanel({
       )}
 
       <div className="flex flex-wrap gap-2">
-        {cats.map((cat) => (
+        {pageCats.map((cat) => (
           <CatButton
             key={cat.id}
             cat={cat}
@@ -131,6 +145,32 @@ export function CatPickerPanel({
           />
         ))}
       </div>
+
+      {cats.length > CAT_PAGE_SIZE && (
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            className="op-btn px-2 py-1 text-xs"
+            disabled={safePage <= 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+          >
+            ← Prev
+          </button>
+          <span className="font-mono text-xs tabular-nums text-muted">
+            {safePage * CAT_PAGE_SIZE + 1}–
+            {Math.min(cats.length, (safePage + 1) * CAT_PAGE_SIZE)} of {cats.length} · page{" "}
+            {safePage + 1}/{pageCount}
+          </span>
+          <button
+            type="button"
+            className="op-btn px-2 py-1 text-xs"
+            disabled={safePage >= pageCount - 1}
+            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+          >
+            Next →
+          </button>
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap gap-2">
         <ControlTip helpId="cat.auto">

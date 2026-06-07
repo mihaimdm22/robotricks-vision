@@ -34,9 +34,11 @@ self-terminating 'f' nudge means a dropped link coasts to a stop within ~400 ms.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 
+from catranger.hw.serial_port import is_bluetooth_spp_port, open_serial_port
 from catranger.types import Command
 
 # Single-char vocabulary of the tested firmware.
@@ -81,6 +83,12 @@ def _drain_distance(rx: bytes) -> tuple[bytes, int | None]:
                 latest = int(parts[1])
             except ValueError:
                 continue
+        elif len(line) > 1:
+            # Phone terminals sometimes show "D129" without a space.
+            try:
+                latest = int(line[1:])
+            except ValueError:
+                continue
     return rx, latest
 
 
@@ -99,21 +107,28 @@ class CharBridge:
         port: str | None = None,
         baud: int = 9600,
         *,
+        telemetry_port: str | None = None,
         transport: object | None = None,
+        telemetry_transport: object | None = None,
         clock: Callable[[], float] = time.perf_counter,
         rot_thresh: float = 0.4,
+        search_rot_thresh: float = 0.25,
         fwd_thresh: float = 0.2,
         min_interval_s: float = 0.5,
         turn_inflight_s: float = 0.30,
         nudge_inflight_s: float = 0.45,
         safe_stop_cm: int = 20,
+        skip_boot: bool = False,
     ) -> None:
         self.port = port
         self.baud = baud
+        self.telemetry_port = (telemetry_port or "").strip() or None
+        self._hybrid = bool(self.telemetry_port and port and self.telemetry_port != port)
         self._clock = clock
         # Tuning (wide rotation deadband: a fixed 90 deg turn overshoots a small
         # bearing error into a limit cycle, so only turn when genuinely off-axis).
         self.rot_thresh = float(rot_thresh)
+        self.search_rot_thresh = float(search_rot_thresh)
         self.fwd_thresh = float(fwd_thresh)
         self.min_interval_s = float(min_interval_s)
         self.turn_inflight_s = float(turn_inflight_s)
@@ -131,22 +146,76 @@ class CharBridge:
         # Host-side mirror of firmware peripheral toggles (updated when send_raw fires).
         self.periph: dict[str, bool] = {"buzzer": True, "rgb": True, "lcd": True}
         self._lcd_target_label = ""
+        self._rx_lock = threading.Lock()
+        self._reader_stop = threading.Event()
+        self._reader_thread: threading.Thread | None = None
+        self._bt_spp = is_bluetooth_spp_port(port)
 
         self._ser = transport
+        self._telemetry_ser = telemetry_transport
         if self._ser is None and port is not None:
             try:
-                import serial  # lazy: only the real link needs pyserial
+                import serial  # noqa: F401 — probe optional dep
             except Exception as e:  # pragma: no cover - optional dep
                 raise RuntimeError(
                     "pyserial is required for a real CharBridge (pip install pyserial). "
                     "Use open_link(None) / DummyBridge for hardware-free testing."
                 ) from e
-            self._ser = serial.Serial(port, baud, timeout=0)
-            # Ensure on-rig buzzer/RGB/LCD match firmware defaults after link open.
+            self._ser = open_serial_port(port, baud)
+        if self._telemetry_ser is None and self.telemetry_port is not None:
+            self._telemetry_ser = open_serial_port(self.telemetry_port, baud, bluetooth_spp=False)
+
+        # Inbound D-lines may arrive on a separate USB port (macOS HC-06 SPP RX is often
+        # silent even while TX reaches the Mega — phone terminals work both ways).
+        self._rx_ser = self._telemetry_ser or self._ser
+        if self._rx_ser is not None:
+            self._start_rx_reader()
+            if self._hybrid:
+                self._wait_for_rx_bytes(timeout_s=2.0)
+            elif self._bt_spp:
+                # Listen before transmitting — matches phone Serial Terminal behaviour.
+                self._wait_for_rx_bytes(timeout_s=1.5)
+        if self._ser is not None and not skip_boot:
             try:
-                self.send_raw(CH_PERIPH_ALL_ON)
+                boot = CH_MANUAL_STOP if (self._bt_spp or self._hybrid) else CH_PERIPH_ALL_ON
+                self.send_raw(boot)
             except Exception:
                 pass
+
+    def _wait_for_rx_bytes(self, timeout_s: float = 1.5) -> bool:
+        """Give inbound telemetry a head start before we write on a fresh link."""
+        deadline = self._clock() + timeout_s
+        while self._clock() < deadline:
+            with self._rx_lock:
+                if self._rx:
+                    return True
+            time.sleep(0.02)
+        return False
+
+    def _start_rx_reader(self) -> None:
+        """Background drain — macOS SPP + pyserial need steady reads like a phone terminal."""
+        rx = self._rx_ser
+        if rx is None:
+            return
+
+        def loop() -> None:
+            while not self._reader_stop.is_set():
+                try:
+                    pending = rx.in_waiting  # type: ignore[attr-defined]
+                except Exception:
+                    break
+                if pending:
+                    try:
+                        chunk = rx.read(pending)  # type: ignore[attr-defined]
+                    except Exception:
+                        break
+                    with self._rx_lock:
+                        self._rx += chunk
+                else:
+                    time.sleep(0.005)
+
+        self._reader_thread = threading.Thread(target=loop, name="char-bridge-rx", daemon=True)
+        self._reader_thread.start()
 
     # ---- quantization (pure given clock + state) -------------------------------
     def _decide(self, cmd: Command, now: float) -> str:
@@ -155,12 +224,14 @@ class CharBridge:
         if now < self._inflight_until:
             return ""
 
+        rot_gate = self.search_rot_thresh if cmd.state == "SEARCH" else self.rot_thresh
+
         # Classify intent. SAFE/IDLE or no drive intent -> stop.
         if cmd.state in ("SAFE", "IDLE") or (
-            abs(cmd.v_fwd) <= self.fwd_thresh and abs(cmd.rotation) <= self.rot_thresh
+            abs(cmd.v_fwd) <= self.fwd_thresh and abs(cmd.rotation) <= rot_gate
         ):
             intent = "stop"
-        elif abs(cmd.rotation) > self.rot_thresh:
+        elif abs(cmd.rotation) > rot_gate:
             intent = "turn_right" if cmd.rotation > 0 else "turn_left"
         elif cmd.v_fwd > self.fwd_thresh:
             intent = "forward"
@@ -279,18 +350,20 @@ class CharBridge:
         """Non-blocking: drain pending bytes, return the cm of the most recent
         complete ``D <cm>`` line this call (or None). Also updates the sticky
         last-known distance used by the forward safety gate."""
-        if self._ser is None:
+        if self._rx_ser is None:
             return None
-        try:
-            pending = self._ser.in_waiting  # type: ignore[attr-defined]
-        except Exception:
-            pending = 0
-        if pending:
+        if self._reader_thread is None:
             try:
-                self._rx += self._ser.read(pending)  # type: ignore[attr-defined]
+                pending = self._rx_ser.in_waiting  # type: ignore[attr-defined]
             except Exception:
-                return None
-        self._rx, latest = _drain_distance(self._rx)
+                pending = 0
+            if pending:
+                try:
+                    self._rx += self._rx_ser.read(pending)  # type: ignore[attr-defined]
+                except Exception:
+                    return None
+        with self._rx_lock:
+            self._rx, latest = _drain_distance(self._rx)
         if latest is not None:
             self._latest_cm = latest
         return latest
@@ -298,12 +371,19 @@ class CharBridge:
     def close(self) -> None:
         """Best-effort stop ('b') then close the link, so teardown never leaves the
         rig latched in motion."""
+        self._reader_stop.set()
+        if self._reader_thread is not None:
+            self._reader_thread.join(timeout=0.5)
+            self._reader_thread = None
         try:
             self._write(CH_MANUAL_STOP)
         except Exception:
             pass
-        if self._ser is not None:
+        for handle in (self._ser, self._telemetry_ser):
+            if handle is None:
+                continue
             try:
-                self._ser.close()  # type: ignore[attr-defined]
+                handle.close()  # type: ignore[attr-defined]
             except Exception:
                 pass
+        self._telemetry_ser = None

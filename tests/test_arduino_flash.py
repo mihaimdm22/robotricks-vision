@@ -68,3 +68,26 @@ def test_flash_sketch_compile_failure(tmp_path: Path) -> None:
 
     assert out["ok"] is False
     assert out["code"] == "flash_compile_failed"
+
+
+def test_flash_sketch_upload_busy_port(tmp_path: Path) -> None:
+    sketch = tmp_path / "cat_ranger"
+    sketch.mkdir()
+
+    def fake_run(cmd: list[str], *, timeout: float = 300) -> tuple[int, str]:
+        joined = " ".join(cmd)
+        if "compile" in joined:
+            return 0, "ok"
+        if "upload" in joined:
+            return 1, "Error: could not open port /dev/cu.usbserial-1410: Resource busy"
+        return 0, "ok"
+
+    with (
+        patch.object(af, "find_cli", return_value="/usr/bin/arduino-cli"),
+        patch.object(af, "_run", side_effect=fake_run),
+    ):
+        out = af.flash_sketch("/dev/cu.usbserial-1410", sketch_dir=sketch, install_deps=False)
+
+    assert out["ok"] is False
+    assert out["code"] == "flash_upload_failed"
+    assert "still in use" in out["problem"]

@@ -235,6 +235,21 @@ def test_follow_with_no_target_reports_target_lost() -> None:
     assert c.stop_reason == StopReason.TARGET_LOST
 
 
+def test_follow_uses_sonar_when_vision_distance_missing() -> None:
+    import math
+
+    det = Detection(xyxy=(100, 100, 200, 260), conf=0.9, cls_id=15, track_id=7)
+    dist = DistanceResult(meters=float("nan"), lo=0.0, hi=0.0, method="geometry")
+    obs = CatObservation(detection=det, distance=dist, bearing_deg=0.0)
+    frame = FrameResult(frame_index=0, observations=[obs], target_observation=obs)
+    c = RobotController(clock=FakeClock(), sonar_baseline_m=0.09)
+    c.set_mode(Mode.FOLLOW)
+    for _ in range(5):
+        cmd = c.decide(frame, gt_cm=125)
+    assert cmd.state in ("ACQUIRE", "TRACK")
+    assert math.isfinite(cmd.v_fwd) or cmd.state == "ACQUIRE"
+
+
 # --------------------------------------------------------------- firmware safe-stop
 
 
@@ -274,6 +289,16 @@ def test_bridge_send_failure_degrades_and_keeps_motors_safe() -> None:
     c.apply(FrameResult(frame_index=0), frame_index=0)
     assert c.robot_connected is False
     assert c.stop_reason == StopReason.LINK_LOST
+
+
+def test_attach_closes_the_previous_bridge() -> None:
+    first = RecordingBridge()
+    second = RecordingBridge()
+    c = RobotController(clock=FakeClock())
+    c.attach(bridge=first)
+    c.attach(bridge=second)
+    assert first.closed is True
+    assert second.closed is False
 
 
 def test_shutdown_sends_a_final_zero_and_closes_the_bridge() -> None:

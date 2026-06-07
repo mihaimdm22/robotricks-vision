@@ -19,8 +19,10 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
-from catranger.types import Command, FrameResult
+from catranger.calibrate_sonar import camera_distance_from_sonar_cm
+from catranger.types import CatObservation, Command, DistanceResult, FrameResult
 
 
 def _deadband(x: float, band: float) -> float:
@@ -44,6 +46,48 @@ def _slew(u: float, prev: float, slew_max: float) -> float:
 
 def _clamp(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
+
+
+def enrich_result_sonar_distance(
+    result: FrameResult,
+    gt_cm: int | None,
+    *,
+    baseline_m: float = 0.09,
+) -> FrameResult:
+    """When vision distance is missing, use HC-SR04 + camera baseline for follow control."""
+    if gt_cm is None or gt_cm < 0:
+        return result
+    target = result.target
+    if target is None:
+        return result
+    dist = target.distance
+    if dist is not None and math.isfinite(dist.meters):
+        return result
+    cam_m = camera_distance_from_sonar_cm(float(gt_cm), baseline_m)
+    if not math.isfinite(cam_m):
+        return result
+    margin = max(0.05, cam_m * 0.08)
+    sonar_dist = DistanceResult(
+        meters=cam_m,
+        lo=cam_m - margin,
+        hi=cam_m + margin,
+        method="sonar",
+    )
+    new_obs = replace(target, distance=sonar_dist)
+    if result.target_observation is not None:
+        return replace(result, target_observation=new_obs)
+    tid = target.track_id
+    patched_obs: list[CatObservation] = []
+    replaced = False
+    for obs in result.observations:
+        if not replaced and tid is not None and obs.track_id == tid:
+            patched_obs.append(new_obs)
+            replaced = True
+        else:
+            patched_obs.append(obs)
+    if not replaced:
+        patched_obs = list(result.observations)
+    return replace(result, observations=patched_obs, target_observation=new_obs)
 
 
 class Follower:

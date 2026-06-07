@@ -90,6 +90,7 @@ def test_sonar_zone_and_peripheral_telemetry() -> None:
     bridge = CharBridge(transport=_Ser())
     rt.controller.attach(bridge=bridge)
     rt.controller.robot_connected = True
+    rt._robot_link_verified = True
     rt.controller.latest_telemetry["gt_cm"] = 45
     t = rt.telemetry()
     assert t["sonar_zone"] == "yellow"

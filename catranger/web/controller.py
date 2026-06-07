@@ -24,7 +24,7 @@ from collections.abc import Callable
 from enum import StrEnum
 from typing import Any, Protocol
 
-from catranger.control import Follower
+from catranger.control import Follower, enrich_result_sonar_distance
 from catranger.types import Command, FrameResult
 
 
@@ -113,10 +113,12 @@ class RobotController:
         clock: Callable[[], float] = time.perf_counter,
         watchdog_timeout_s: float = 0.5,
         safe_stop_cm: int = 20,
+        sonar_baseline_m: float = 0.09,
     ) -> None:
         self._clock = clock
         self.watchdog_timeout_s = float(watchdog_timeout_s)
         self.safe_stop_cm = int(safe_stop_cm)
+        self.sonar_baseline_m = float(sonar_baseline_m)
         self.follower: _FollowerLike = (
             follower if follower is not None else Follower(follow_cfg or {}, clock=clock)
         )
@@ -202,6 +204,11 @@ class RobotController:
 
             # FOLLOW: hand off to the autonomous Follower (existing core)
             follow_result = result if result is not None else FrameResult(frame_index=0)
+            follow_result = enrich_result_sonar_distance(
+                follow_result,
+                gt_cm,
+                baseline_m=self.sonar_baseline_m,
+            )
             cmd = self.follower.step(follow_result)
             self.stop_reason = (
                 StopReason.NONE if follow_result.target is not None else StopReason.TARGET_LOST
@@ -212,6 +219,12 @@ class RobotController:
     def attach(self, *, bridge: _BridgeLike) -> None:
         """Inject the hardware bridge (the SOLE writer is this controller). A
         DummyBridge reads as 'simulation', not 'connected'."""
+        old = self._bridge
+        if old is not None and old is not bridge:
+            try:
+                old.close()
+            except Exception:
+                pass
         self._bridge = bridge
         self.robot_connected = type(bridge).__name__ != "DummyBridge"
 
@@ -219,9 +232,10 @@ class RobotController:
         """One control iteration on an ALREADY-computed perception result: decide ->
         send -> read GT -> publish telemetry. Perception + drawing live in the runtime
         (this stays pure: no cv2/torch). Never raises on a dead bridge."""
-        cmd = self.decide(result, gt_cm=self._last_gt)
+        gt_cm = self._safe_read_gt()
+        cmd = self.decide(result, gt_cm=gt_cm)
         self._safe_send(cmd)
-        self._last_gt = self._safe_read_gt()
+        self._last_gt = gt_cm
         target = result.target if result is not None else None
         known_ids = list(result.target_known_ids) if result is not None else []
         self._sync_lcd_target(

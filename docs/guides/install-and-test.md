@@ -179,9 +179,10 @@ uv run python scripts/demo.py --source "rtsp://USER:PASS@CAM_IP:554/stream1" --c
 ### 4b. Robot — flash the Arduino firmware
 
 1. Open `arduino/cat_ranger/cat_ranger.ino` in the Arduino IDE.
-2. Confirm the link defines for your setup:
-   - **Bluetooth module on Serial1** (default): `#define LINK Serial1` / `LINK_BAUD 9600`.
-   - **USB cable**: `#define LINK Serial` / `LINK_BAUD 115200`.
+2. Confirm the link defines for your setup in `arduino/cat_ranger/link_config.h`:
+   - **Bluetooth module on Serial1** (default): `CATRANGER_BT_LINK Serial1` / `LINK_BAUD 9600`.
+   - **Module on D0/D1** (non-standard): `CATRANGER_BT_LINK Serial` and `CATRANGER_POLL_USB 0`.
+   - **Bluetooth-only moves**: external power + USB unplugged from laptop — see [bluetooth-only.md](bluetooth-only.md).
 3. Wire per [hardware.md §wiring](../architecture/hardware.md) (BT module TXD→D19,
    RXD←D18 *through a divider*, VCC→5V, GND→GND; servo signal→D9).
 4. Flash to the Mega over USB.

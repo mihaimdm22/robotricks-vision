@@ -34,7 +34,7 @@
   <main>
     <section class="video-col">
       <div class="video-wrap">
-        <img id="video" src="/video" alt="live video" />
+        <img id="video" src="/video" alt="live video" decoding="async" />
         <canvas id="overlay" class="overlay-canvas" aria-hidden="true"></canvas>
         <div class="ptz-card ptz-overlay" aria-label="Camera pan/tilt">
           <div class="ptz-head">
@@ -110,14 +110,6 @@
         <label class="slider" data-help="drive.speed">Speed <input id="speed" type="range" min="0.1" max="1" step="0.1" value="0.6" /><span id="speedVal" class="slider-val">0.6</span></label>
         <label class="slider" data-help="drive.body_yaw">Body yaw <input id="bodyYaw" type="range" min="-1" max="1" step="0.05" value="0" disabled /><span id="yawVal" class="slider-val">0</span></label>
 
-        <div class="section-head">
-          <span class="section-title" data-help-section="section.cats">Cats in view</span>
-          <span id="catPickerStatus" class="hint-inline"></span>
-          <button type="button" class="btn ghost mini" id="openCatsTab">Saved cats →</button>
-        </div>
-        <div id="catPicker" class="cat-picker"></div>
-        <p id="catPickerHint" class="hint">Connect a model and camera to see live cat cards.</p>
-
         <div class="section-head"><span class="section-title" data-help-section="section.peripherals">Rig sensors &amp; peripherals</span></div>
         <div id="periphPanel" class="periph-panel">
           <div class="periph-grid">
@@ -157,6 +149,19 @@
           </div>
           <p id="periphHint" class="hint">Connect CharBridge firmware to toggle on-rig feedback.</p>
         </div>
+
+        <div class="section-head">
+          <span class="section-title" data-help-section="section.cats">Cats in view</span>
+          <span id="catPickerStatus" class="hint-inline"></span>
+          <button type="button" class="btn ghost mini" id="openCatsTab">Saved cats →</button>
+        </div>
+        <div id="catPicker" class="cat-picker"></div>
+        <div id="catPickerPager" class="cat-picker-pager hidden">
+          <button type="button" class="btn ghost mini" id="catPickerPrev" aria-label="Previous cats page">← Prev</button>
+          <span id="catPickerPageLabel" class="hint-inline"></span>
+          <button type="button" class="btn ghost mini" id="catPickerNext" aria-label="Next cats page">Next →</button>
+        </div>
+        <p id="catPickerHint" class="hint">Connect a model and camera to see live cat cards.</p>
       </div>
 
       <!-- CATS -->
@@ -203,27 +208,32 @@
         </div>
         <div class="conn-group">
           <h3>Robot (Bluetooth / USB)</h3>
+          <p class="hint">HC-05/HC-06: pair in <strong>System Settings → Bluetooth</strong>. On <strong>macOS</strong>, HC-06 often receives 0 bytes even when the phone works — if Mega USB is plugged into this Mac, the console uses <strong>hybrid mode</strong> (commands over BT, sonar over USB). Slow red blink → click <strong>Connect</strong> on HC-06 in Bluetooth settings, then <strong>Scan → /dev/cu.HC-06 → Connect</strong> @ 9600.</p>
           <button class="btn ghost" id="robotDiscover" data-help="conn.robot_scan">Scan ports</button>
           <div id="discoverHint" class="hint"></div>
           <ul id="portList" class="port-list"></ul>
           <select id="robotConn" data-help="conn.robot_type">
             <option value="dummy">dummy (simulation)</option>
-            <option value="bt">bt — HC-05 SPP (9600)</option>
+            <option value="bt">bt — HC-05/HC-06 SPP (9600)</option>
             <option value="ble">ble — HM-10</option>
             <option value="usb">usb — serial</option>
           </select>
-          <input id="robotTarget" type="text" placeholder="/dev/cu.HC-05... or BLE address" />
-          <input id="robotBaud" type="number" value="115200" />
+          <input id="robotTarget" type="text" placeholder="/dev/cu.HC-06 or /dev/cu.HC-05-..." />
+          <input id="robotBaud" type="number" value="9600" title="HC-05/HC-06 factory baud is 9600" />
           <button class="btn" id="robotConnect" data-help="conn.robot_connect">Connect</button>
           <button class="btn ghost" id="robotDisconnect" data-help="conn.robot_disconnect">Disconnect</button>
+          <button class="btn ghost" id="robotUseUsb" type="button" title="When HC-06 on macOS shows no telemetry, USB on this Mac usually works">Use USB (recommended on Mac)</button>
           <div id="robotMsg" class="conn-msg"></div>
         </div>
         <div class="conn-group">
           <h3>Firmware flash (USB)</h3>
-          <p class="hint">Uploads <code>arduino/cat_ranger</code> via arduino-cli. Scan ports, pick the Arduino USB device (<code>/dev/cu.*</code> on macOS), then flash. The robot link disconnects during upload.</p>
+          <p class="hint">Uploads <code>arduino/cat_ranger</code> via arduino-cli. Scan lists ports on the <strong>machine running catranger serve</strong> — plug the Mega USB cable into that host. On macOS use <code>/dev/cu.usbserial-*</code> or <code>/dev/cu.usbmodem*</code> (not <code>/dev/tty.*</code>).</p>
           <button class="btn ghost" id="flashDiscover">Scan USB ports</button>
           <label class="row-label">Flash port (required)
             <select id="flashPort"><option value="">— scan ports first —</option></select>
+          </label>
+          <label class="row-label">Or type port manually
+            <input id="flashPortManual" type="text" placeholder="/dev/cu.usbserial-1410 or /dev/cu.usbmodem1101" />
           </label>
           <button class="btn" id="flashFirmware" disabled data-help="conn.robot_flash">Flash firmware (USB)</button>
           <div id="flashHint" class="hint"></div>

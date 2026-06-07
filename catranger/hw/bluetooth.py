@@ -156,6 +156,8 @@ def open_link(
     target: str | None = None,
     baud: int = 115200,
     verbose: bool = False,
+    *,
+    strict: bool = False,
 ):
     """Unified factory for every robot link. `connection`:
 
@@ -186,8 +188,8 @@ def open_link(
         try:
             return CharBridge(port=target, baud=9600 if baud == 115200 else baud)
         except Exception as e:
-            # Bulletproof demo: any link failure (no pyserial, bad/locked port)
-            # degrades to a recorder instead of crashing the run.
+            if strict:
+                raise RuntimeError(f"char link failed ({e})") from e
             print(f"[catranger] char link unavailable ({e}); using DummyBridge")
             return DummyBridge(port=target, verbose=verbose)
 
@@ -195,6 +197,8 @@ def open_link(
         try:
             return BLEBridge(target)
         except RuntimeError as e:
+            if strict:
+                raise
             print(f"[catranger] BLE unavailable ({e}); using DummyBridge")
             return DummyBridge(port=target, verbose=verbose)
 
@@ -205,8 +209,14 @@ def open_link(
 
         link_baud = 9600 if baud == 115200 else baud
         try:
+            if conn == "bt" and sys.platform == "darwin" and target:
+                from catranger.hw.macos_bt import open_char_bridge_with_macos_hybrid
+
+                return open_char_bridge_with_macos_hybrid(target, link_baud)[0]
             return CharBridge(port=target, baud=link_baud)
         except Exception as e:
+            if strict:
+                raise RuntimeError(f"{conn} char link failed ({e})") from e
             print(f"[catranger] {conn} char link unavailable ({e}); using DummyBridge")
             return DummyBridge(port=target, verbose=verbose)
 

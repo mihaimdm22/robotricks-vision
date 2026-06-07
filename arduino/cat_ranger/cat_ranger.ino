@@ -53,6 +53,7 @@
 #include <AFMotor.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include "link_config.h"
 
 // Motoare pe M3 si M4 (daca rotirile ies inversate, schimba 3 cu 4)
 AF_DCMotor motorStanga(3);
@@ -171,11 +172,13 @@ void trimiteTelemetrie() {
     ultimaTelemetrie = millis();
     if (mod != 'a') distantaCurenta = getDistanta();
     long out = (distantaCurenta >= 999) ? -1 : distantaCurenta;
-    Serial1.print("D ");
-    Serial1.println(out);
+    CATRANGER_BT_LINK.print("D ");
+    CATRANGER_BT_LINK.println(out);
+#if CATRANGER_POLL_USB
     // USB host (CharBridge over /dev/cu.usbserial-*) reads Serial, not Serial1.
     Serial.print("D ");
     Serial.println(out);
+#endif
   }
 }
 
@@ -315,8 +318,10 @@ void ruleazaAutonom() {
 }
 
 void setup() {
-  Serial.begin(9600);
-  Serial1.begin(9600);
+#if CATRANGER_POLL_USB
+  Serial.begin(LINK_BAUD);
+#endif
+  CATRANGER_BT_LINK.begin(LINK_BAUD);
 
   stopMotoare();
 
@@ -339,6 +344,10 @@ void setup() {
   // on the 9600 Bluetooth link, the rig still starts in the mode the host assumes,
   // instead of being stuck in idle (mod=0) silently ignoring every move command.
   mod = 'b';
+
+#if CATRANGER_BT_BOOT_BANNER
+  CATRANGER_BT_LINK.println(F("CR BT ready"));
+#endif
 }
 
 // Shared by Serial (USB) and Serial1 (Bluetooth) — same single-char protocol.
@@ -466,8 +475,10 @@ void pollStream(Stream &s) {
 }
 
 void loop() {
-  pollStream(Serial1);
+  pollStream(CATRANGER_BT_LINK);
+#if CATRANGER_POLL_USB
   pollStream(Serial);
+#endif
 
   if (mod == 'a') {
     ruleazaAutonom();

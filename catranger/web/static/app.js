@@ -9,6 +9,7 @@ let linkState = "connecting";
 let mode = "IDLE";
 let estopped = false;
 let lastT = null;
+let lastLibraryCount = null;
 let bannerReason = null;
 let bannerShowTimer = null;
 let bannerHideTimer = null;
@@ -56,6 +57,141 @@ const badgeDebouncer = new BadgeDebouncer(3);
 let overlayFrameId = -1;
 const shownBadges = new Map();
 
+// Telemetry smoothing: coalesce WS bursts to one paint/frame; EMA on noisy scalars.
+class Ema {
+  constructor(alpha = 0.25) {
+    this.alpha = alpha;
+    this.value = null;
+  }
+  push(x) {
+    if (x == null || !Number.isFinite(x)) return this.value;
+    this.value = this.value == null ? x : this.alpha * x + (1 - this.alpha) * this.value;
+    return this.value;
+  }
+  reset() { this.value = null; }
+}
+const uiSmooth = {
+  targetDist: new Ema(0.2),
+  gtM: new Ema(0.22),
+  sonarCm: new Ema(0.25),
+  catDist: new Map(),
+};
+let pendingTelemetry = null;
+let lastCatPickerT = null;
+let uiPaintRaf = 0;
+let lastSmoothTargetKey = null;
+let overlayCanvas = { w: 0, h: 0, dpr: 1 };
+const overlayBoxTarget = new Map();
+const overlayBoxSmooth = new Map();
+const OVERLAY_LERP = 0.28;
+let lastOverlayT = null;
+let videoStaleLatch = false;
+const savedLibraryIds = new Map();
+
+function detOverlayKey(d, i) {
+  return d.track_id != null ? `t${d.track_id}` : `i${i}`;
+}
+function tickOverlaySmoothing() {
+  for (const [key, target] of overlayBoxTarget) {
+    const prev = overlayBoxSmooth.get(key);
+    if (!prev) {
+      overlayBoxSmooth.set(key, target.slice());
+      continue;
+    }
+    overlayBoxSmooth.set(
+      key,
+      target.map((v, i) => prev[i] + OVERLAY_LERP * (v - prev[i])),
+    );
+  }
+}
+function syncOverlayState(t) {
+  lastOverlayT = t;
+  const o = t.overlay;
+  if (!o || !o.dets || !o.dets.length) {
+    overlayBoxTarget.clear();
+    overlayBoxSmooth.clear();
+    overlayFrameId = -1;
+    shownBadges.clear();
+    badgeDebouncer.state.clear();
+    return;
+  }
+  if (o.frame_id !== overlayFrameId) {
+    overlayFrameId = o.frame_id;
+    const next = new Map();
+    const liveKeys = new Set();
+    o.dets.forEach((d, i) => {
+      const key = detOverlayKey(d, i);
+      liveKeys.add(key);
+      const b = badgeDebouncer.update(key, pickBadge(d.flags));
+      if (b) next.set(key, b);
+    });
+    badgeDebouncer.retain(liveKeys);
+    shownBadges.clear();
+    next.forEach((v, k) => shownBadges.set(k, v));
+  }
+  const liveKeys = new Set();
+  o.dets.forEach((d, i) => {
+    const key = detOverlayKey(d, i);
+    liveKeys.add(key);
+    if (d.xyxy_norm) overlayBoxTarget.set(key, d.xyxy_norm);
+  });
+  for (const key of overlayBoxTarget.keys()) {
+    if (!liveKeys.has(key)) {
+      overlayBoxTarget.delete(key);
+      overlayBoxSmooth.delete(key);
+    }
+  }
+}
+function overlayPaintLoop() {
+  tickOverlaySmoothing();
+  if (lastOverlayT) drawOverlay(lastOverlayT);
+  requestAnimationFrame(overlayPaintLoop);
+}
+
+function scheduleUIUpdate(t) {
+  pendingTelemetry = t;
+  if (!uiPaintRaf) {
+    uiPaintRaf = requestAnimationFrame(() => {
+      uiPaintRaf = 0;
+      if (pendingTelemetry) updateUI(pendingTelemetry);
+    });
+  }
+}
+function smoothTargetKey(t) {
+  if (t.target_ids?.length) return t.target_ids.join("/");
+  if (t.target_id != null) return String(t.target_id);
+  return "none";
+}
+function formatSmoothM(ema, raw) {
+  const v = ema.push(raw);
+  return v != null ? `${v.toFixed(2)} m` : "—";
+}
+function formatSmoothCm(ema, raw) {
+  const v = ema.push(raw);
+  return v != null ? `${Math.round(v)} cm` : "—";
+}
+function catDistEma(id) {
+  let ema = uiSmooth.catDist.get(id);
+  if (!ema) {
+    ema = new Ema(0.28);
+    uiSmooth.catDist.set(id, ema);
+  }
+  return ema;
+}
+function pruneCatDistSmooth(liveIds) {
+  for (const id of uiSmooth.catDist.keys()) {
+    if (!liveIds.has(id)) uiSmooth.catDist.delete(id);
+  }
+}
+function updateVideoStaleLatch(t) {
+  const staleMs = t.video_stale_ms || 1000;
+  const age = t.frame_age_ms;
+  if (age == null) return videoStaleLatch;
+  if (!videoStaleLatch && age > staleMs) videoStaleLatch = true;
+  else if (videoStaleLatch && age < staleMs * 0.82) videoStaleLatch = false;
+  return videoStaleLatch;
+}
+
 function showNack(problem, fix) {
   const el = $("nackToast");
   el.textContent = `${problem}${fix ? " — " + fix : ""}`;
@@ -93,7 +229,7 @@ function connectWS() {
   ws.onopen = () => { setLink("live"); wsSend({ type: "claim" }); };
   ws.onmessage = (ev) => {
     const t = JSON.parse(ev.data);
-    if (t.type === "telemetry") updateUI(t);
+    if (t.type === "telemetry") scheduleUIUpdate(t);
     else if (t.type === "nack") showNack(t.problem || "request rejected", t.fix);
   };
   ws.onclose = () => { setLink("disconnected"); setTimeout(connectWS, 1000); };
@@ -139,10 +275,19 @@ function updateUI(t) {
   badge.className = "mode-badge " + (estopped ? "mode-ESTOP" : "mode-" + t.mode);
   $("resetBtn").classList.toggle("hidden", !estopped);
 
-  // SIMULATION vs LIVE — never let a dummy link masquerade as a real robot
+  // SIMULATION vs LIVE — port open without Mega telemetry is not "live"
   const sim = $("simBanner");
-  if (t.robot_connected) { sim.textContent = "LIVE — REAL ROBOT"; sim.className = "sim-banner live"; }
-  else { sim.textContent = "SIMULATION"; sim.className = "sim-banner sim"; }
+  const robotLive = t.robot_connected && t.link_verified !== false;
+  if (robotLive) {
+    sim.textContent = "LIVE — REAL ROBOT";
+    sim.className = "sim-banner live";
+  } else if (t.robot_connected && t.link_verified === false) {
+    sim.textContent = "PORT OPEN — NO MEGA DATA (close phone BT to HC-06, reconnect Mac BT, or use USB)";
+    sim.className = "sim-banner warn";
+  } else {
+    sim.textContent = "SIMULATION";
+    sim.className = "sim-banner sim";
+  }
 
   // stop-reason banner (debounced so WATCHDOG doesn't flicker at the 0.5s edge)
   let reason = t.stop_reason && t.stop_reason !== "NONE" ? t.stop_reason : null;
@@ -163,14 +308,20 @@ function updateUI(t) {
     }
   }
 
-  // video staleness
-  const stale = t.frame_age_ms != null && t.frame_age_ms > (t.video_stale_ms || 1000);
+  // video staleness (hysteresis so the dim overlay doesn't blink at the threshold)
+  const stale = updateVideoStaleLatch(t);
   $("staleOverlay").classList.toggle("hidden", !stale);
 
-  // primary strip
-  $("dist").textContent = t.target_dist_m != null ? t.target_dist_m + " m" : "—";
+  // primary strip — EMA so distance readouts don't jitter every frame
+  const targetKey = smoothTargetKey(t);
+  if (targetKey !== lastSmoothTargetKey) {
+    lastSmoothTargetKey = targetKey;
+    uiSmooth.targetDist.reset();
+  }
+  $("dist").textContent = formatSmoothM(uiSmooth.targetDist, t.target_dist_m);
   $("distWarn").classList.toggle("hidden", t.camera_calibrated !== false);
-  $("gt").textContent = t.gt_cm != null && t.gt_cm >= 0 ? (t.gt_cm / 100).toFixed(2) + " m" : "—";
+  const gtRaw = t.gt_cm != null && t.gt_cm >= 0 ? t.gt_cm / 100 : null;
+  $("gt").textContent = formatSmoothM(uiSmooth.gtM, gtRaw);
   $("target").textContent =
     (t.target_ids && t.target_ids.length)
       ? "id " + t.target_ids.join("/")
@@ -183,10 +334,11 @@ function updateUI(t) {
   // diagnostics
   $("fps").textContent = "FPS " + (t.fps != null ? t.fps : "—");
   pill("camPill", "camera", t.camera_connected, t.camera);
-  pill("robotPill", "robot", t.robot_connected, t.robot, true);
-  $("modelPill").textContent = "model " + (t.model || "—") + (t.model_status ? " (" + t.model_status + ")" : "");
-  $("modelPill").className = "pill " + (t.perception_available ? "ok" : "warn");
-
+  const robotOk = t.robot_connected && t.link_verified !== false;
+  pill("robotPill", "robot", robotOk, t.robot, true);
+  if (t.stop_reason === "LINK_LOST" && $("robotMsg")) {
+    msg("robotMsg", "robot link lost — click Connect again", "warn");
+  }
   $("modelPill").textContent = "model " + (t.model || "—") + (t.model_status ? " (" + t.model_status + ")" : "");
   $("modelPill").className = "pill " + (t.perception_available ? "ok" : "warn");
   $("evalPill").classList.toggle("hidden", !t.eval_running);
@@ -195,7 +347,8 @@ function updateUI(t) {
   if (t.train_running) { $("trainPill").textContent = "train running"; $("trainPill").className = "pill warn"; }
 
   const isController = t.you_are_controller !== false;
-  const drivable = mode === "MANUAL" && !estopped && isController && linkState === "live";
+  const drivable = mode === "MANUAL" && !estopped && isController && linkState === "live"
+    && t.link_verified !== false;
   $("drivepad").classList.toggle("disabled", !drivable);
   $("bodyYaw").disabled = !drivable;
   $("observerBadge").classList.toggle("hidden", isController || !t);
@@ -214,12 +367,20 @@ function updateUI(t) {
     b.classList.toggle("active", b.dataset.mode === t.mode && !estopped));
 
   chartPush(t);
-  drawOverlay(t);
+  syncOverlayState(t);
   renderCatPicker(t);
   renderPeripherals(t);
   renderPtz(t);
   updateCatsFinding(t);
-  drivableRef = mode === "MANUAL" && !estopped && t.you_are_controller !== false && linkState === "live";
+  if (t.library_count != null) {
+    if (lastLibraryCount != null && t.library_count > lastLibraryCount
+        && document.querySelector(".tab.active[data-tab=\"cats\"]")) {
+      loadCatLibrary();
+    }
+    lastLibraryCount = t.library_count;
+  }
+  drivableRef = mode === "MANUAL" && !estopped && t.you_are_controller !== false
+    && linkState === "live" && t.link_verified !== false;
 }
 function pill(id, label, ok, detail, robot) {
   const el = $(id);
@@ -300,6 +461,16 @@ document.querySelectorAll(".tab").forEach((tab) =>
 $("openCatsTab").addEventListener("click", () => {
   document.querySelector('.tab[data-tab="cats"]').click();
 });
+$("catPickerPrev").addEventListener("click", () => {
+  if (catPickerPage.index > 0) {
+    catPickerPage.index -= 1;
+    if (lastCatPickerT) renderCatPicker(lastCatPickerT);
+  }
+});
+$("catPickerNext").addEventListener("click", () => {
+  catPickerPage.index += 1;
+  if (lastCatPickerT) renderCatPicker(lastCatPickerT);
+});
 
 // ---------------------------------------------------------------- models
 async function loadModels() {
@@ -345,16 +516,72 @@ $("camDisconnect").addEventListener("click", async () => {
   await post("/api/camera/disconnect"); msg("camMsg", "using synthetic source", "ok");
 });
 $("robotConnect").addEventListener("click", async () => {
+  msg("robotMsg", "opening Bluetooth serial link…", "ok");
   const r = await post("/api/robot/connect", {
     connection: $("robotConn").value,
-    target: $("robotTarget").value || null,
-    baud: parseInt($("robotBaud").value, 10) || 115200,
+    target: ($("robotTarget").value || "").trim() || null,
+    baud: parseInt($("robotBaud").value, 10) || 9600,
   });
-  msg("robotMsg", r.warning ? r.warning : `bridge: ${r.bridge} (${r.connected ? "live" : "sim"})`,
-    r.warning ? "warn" : (r.connected ? "ok" : "warn"));
+  if (!r.ok) {
+    msg("robotMsg", r.fix ? `${r.fix} (${r.problem || r.code})` : (r.problem || r.code), "warn");
+    return;
+  }
+  const live = r.connected ? "live" : "sim";
+  let text = `bridge: ${r.bridge} (${live})`;
+  if (r.warning) text += ` — ${r.warning}`;
+  else if (r.link_verified) text += " — telemetry OK (HC-06 should stop pairing blink)";
+  if (r.usb_fallback && r.link_verified === false) {
+    text += ` Use “Use USB” or connect usb → ${r.usb_fallback} @ 9600.`;
+  }
+  if (r.hybrid_telemetry) {
+    text += ` Hybrid: commands on BT, sonar on ${r.hybrid_telemetry}.`;
+  }
+  msg("robotMsg", text, r.link_verified ? "ok" : r.connected ? "warn" : "warn");
+  try {
+    const st = await (await fetch("/api/status")).json();
+    updateUI(st);
+  } catch { /* banner sync best-effort */ }
+});
+$("robotConn").addEventListener("change", () => {
+  if ($("robotConn").value === "bt" && $("robotBaud").value === "115200") {
+    $("robotBaud").value = "9600";
+  }
 });
 $("robotDisconnect").addEventListener("click", async () => {
   await post("/api/robot/disconnect"); msg("robotMsg", "disconnected (simulation)", "ok");
+});
+$("robotUseUsb").addEventListener("click", async () => {
+  msg("robotMsg", "scanning for USB Mega…", "ok");
+  const d = await (await fetch("/api/discover")).json();
+  const usb = (d.serial || []).find((p) => {
+    const t = String(p.target || "");
+    return t && !/HC-0[56]/i.test(t);
+  });
+  if (!usb) {
+    msg("robotMsg", "No USB serial port found — plug Mega USB into this Mac, then Scan ports.", "warn");
+    return;
+  }
+  $("robotConn").value = "usb";
+  $("robotTarget").value = usb.target;
+  $("robotBaud").value = String(usb.baud || 9600);
+  msg("robotMsg", `connecting usb → ${usb.target} @ ${usb.baud || 9600}…`, "ok");
+  const r = await post("/api/robot/connect", {
+    connection: "usb",
+    target: usb.target,
+    baud: parseInt(String(usb.baud || 9600), 10) || 9600,
+  });
+  if (!r.ok) {
+    msg("robotMsg", r.fix ? `${r.fix} (${r.problem || r.code})` : (r.problem || r.code), "warn");
+    return;
+  }
+  let text = `bridge: ${r.bridge} (live)`;
+  if (r.link_verified) text += " — telemetry OK; drive pad enabled";
+  else if (r.warning) text += ` — ${r.warning}`;
+  msg("robotMsg", text, r.link_verified ? "ok" : "warn");
+  try {
+    const st = await (await fetch("/api/status")).json();
+    updateUI(st);
+  } catch { /* banner sync best-effort */ }
 });
 function msg(id, text, cls) { const e = $(id); e.textContent = text; e.className = "conn-msg " + cls; }
 
@@ -385,26 +612,40 @@ $("flashDiscover").addEventListener("click", () => discoverPorts(true));
 async function discoverPorts(focusFlash) {
   const hintEl = focusFlash ? $("flashHint") : $("discoverHint");
   hintEl.textContent = "scanning…";
+  hintEl.classList.remove("warn");
   const r = await (await fetch("/api/robot/discover")).json();
   const ul = $("portList"); ul.innerHTML = "";
   if (r.ok) {
-    hintEl.textContent = r.hint || `${r.serial.length} port(s)`;
-    populatePortSelects(r.serial || []);
-    r.serial.forEach((p) => {
+    const usb = r.serial || [];
+    const bt = r.bluetooth_spp || [];
+    const robotPorts = focusFlash ? usb : [...usb, ...bt];
+    hintEl.textContent = r.hint || (robotPorts.length ? `${robotPorts.length} port(s)` : "no ports found");
+    if (!robotPorts.length) hintEl.classList.add("warn");
+    populatePortSelects(usb);
+    robotPorts.forEach((p) => {
       const li = document.createElement("li");
       const b = document.createElement("button");
       b.className = "btn ghost";
-      b.textContent = p.label || p.target;
-      b.onclick = () => pickPort(p.target, focusFlash);
+      const kind = p.kind === "bluetooth_spp" ? "BT " : (focusFlash ? "" : "USB ");
+      b.textContent = p.label && p.label !== p.target
+        ? `${kind}${p.label} — ${p.target}`
+        : `${kind}${p.target}`;
+      b.onclick = () => pickPort(p.target, focusFlash, p.kind);
       li.appendChild(b); ul.appendChild(li);
     });
     if (focusFlash) updateFlashUi();
   } else hintEl.textContent = r.problem || "discover failed";
 }
 
-function pickPort(target, focusFlash) {
+function pickPort(target, focusFlash, kind) {
   $("robotTarget").value = target;
-  $("robotConn").value = "usb";
+  if (!focusFlash) {
+    const isBt = kind === "bluetooth_spp" || /hc-0[56]/i.test(target) || /rfcomm/i.test(target);
+    $("robotConn").value = isBt ? "bt" : "usb";
+    if (isBt) $("robotBaud").value = "9600";
+  } else {
+    $("robotConn").value = "usb";
+  }
   const sel = $("flashPort");
   if (sel) {
     let opt = [...sel.options].find((o) => o.value === target);
@@ -416,6 +657,8 @@ function pickPort(target, focusFlash) {
     }
     sel.value = target;
   }
+  const manual = $("flashPortManual");
+  if (manual) manual.value = target;
   updateFlashUi();
   if (focusFlash) msg("flashMsg", `selected ${target}`, "ok");
 }
@@ -425,6 +668,7 @@ function scorePort(p) {
   const l = (p.label || "").toLowerCase();
   let s = 0;
   if (t.includes("usbserial") || t.includes("usbmodem") || t.includes("wchusb")) s += 10;
+  if (t.includes("ttyacm") || t.includes("ttyusb") || t.includes("slab")) s += 9;
   if (t.includes("arduino")) s += 8;
   if (t.startsWith("/dev/cu.")) s += 5;
   if (l.includes("usb") || l.includes("serial") || l.includes("arduino")) s += 3;
@@ -449,6 +693,8 @@ function populatePortSelects(ports) {
 }
 
 function selectedFlashPort() {
+  const manual = ($("flashPortManual")?.value || "").trim();
+  if (manual) return manual;
   const fromFlash = ($("flashPort")?.value || "").trim();
   if (fromFlash) return fromFlash;
   return ($("robotTarget").value || "").trim() || null;
@@ -475,41 +721,40 @@ function drawOverlay(t) {
   const dpr = window.devicePixelRatio || 1;
   const cw = wrap.clientWidth - 16, ch = wrap.clientHeight - 16;
   if (cw <= 0 || ch <= 0) return;
-  cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
+  const pw = Math.round(cw * dpr), ph = Math.round(ch * dpr);
+  if (overlayCanvas.w !== pw || overlayCanvas.h !== ph || overlayCanvas.dpr !== dpr) {
+    cv.width = pw;
+    cv.height = ph;
+    overlayCanvas = { w: pw, h: ph, dpr };
+  }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
-  const stale = t.frame_age_ms != null && t.frame_age_ms > (t.video_stale_ms || 1000);
-  ctx.globalAlpha = stale ? 0.35 : 1;
+  ctx.globalAlpha = videoStaleLatch ? 0.35 : 1;
   if (!o || !o.dets || !o.dets.length) return;
-
-  if (o.frame_id !== overlayFrameId) {
-    overlayFrameId = o.frame_id;
-    const next = new Map();
-    const liveKeys = new Set();
-    o.dets.forEach((d, i) => {
-      const key = d.track_id != null ? `t${d.track_id}` : `i${i}`;
-      liveKeys.add(key);
-      const b = badgeDebouncer.update(key, pickBadge(d.flags));
-      if (b) next.set(key, b);
-    });
-    badgeDebouncer.retain(liveKeys);
-    shownBadges.clear();
-    next.forEach((v, k) => shownBadges.set(k, v));
-  }
 
   const rect = contentRect(cw, ch, o.frame_w || 1920, o.frame_h || 1080);
   const accent = "#22c55e", dim = "rgba(255,255,255,0.55)", warn = "#f59e0b", stop = "#ef4444";
   ctx.font = "600 13px ui-monospace, monospace";
   ctx.textBaseline = "bottom";
-  for (const d of o.dets) if (!d.is_target) drawDet(ctx, d, rect, dim, false);
-  for (const d of o.dets) if (d.is_target) drawDet(ctx, d, rect, accent, true);
   o.dets.forEach((d, i) => {
-    const badge = shownBadges.get(d.track_id != null ? `t${d.track_id}` : `i${i}`);
-    if (badge) drawBadge(ctx, d, rect, badge, warn, stop);
+    const box = overlayBoxFor(d, i);
+    if (!d.is_target) drawDet(ctx, d, rect, dim, false, box);
+  });
+  o.dets.forEach((d, i) => {
+    const box = overlayBoxFor(d, i);
+    if (d.is_target) drawDet(ctx, d, rect, accent, true, box);
+  });
+  o.dets.forEach((d, i) => {
+    const badge = shownBadges.get(detOverlayKey(d, i));
+    if (badge) drawBadge(ctx, d, rect, badge, warn, stop, overlayBoxFor(d, i));
   });
 }
-function drawDet(ctx, d, rect, color, isTarget) {
-  const b = denormBox(d.xyxy_norm, rect);
+function overlayBoxFor(d, i) {
+  const key = detOverlayKey(d, i);
+  return overlayBoxSmooth.get(key) || overlayBoxTarget.get(key) || d.xyxy_norm;
+}
+function drawDet(ctx, d, rect, color, isTarget, boxNorm) {
+  const b = denormBox(boxNorm || d.xyxy_norm, rect);
   ctx.strokeStyle = color;
   ctx.lineWidth = isTarget ? 3 : 1.5;
   ctx.strokeRect(b.x, b.y, b.w, b.h);
@@ -534,10 +779,10 @@ function overlayLabel(d, isTarget) {
   if (d.bearing_deg != null) parts.push(`${d.bearing_deg >= 0 ? "+" : ""}${d.bearing_deg.toFixed(0)}°`);
   return parts.join("  ");
 }
-function drawBadge(ctx, d, rect, badge, warn, stop) {
+function drawBadge(ctx, d, rect, badge, warn, stop, boxNorm) {
   const st = BADGE_STYLE[badge];
   const text = `${st.glyph} ${st.label}`;
-  const b = denormBox(d.xyxy_norm, rect);
+  const b = denormBox(boxNorm || d.xyxy_norm, rect);
   ctx.font = "600 11px ui-monospace, monospace";
   ctx.textBaseline = "middle";
   const padX = 4, h = 16, w = ctx.measureText(text).width + padX * 2;
@@ -574,77 +819,203 @@ function mergeCatCards(t) {
   return [...byId.values()].sort((a, b) => b.conf - a.conf);
 }
 
+const catPickerPool = {
+  cards: new Map(),
+  autoRow: null,
+};
+
+const catPickerPage = { index: 0, size: 6 };
+
+function syncCatPickerPage(cats) {
+  const pages = Math.max(1, Math.ceil(cats.length / catPickerPage.size));
+  if (catPickerPage.index >= pages) catPickerPage.index = pages - 1;
+  if (catPickerPage.index < 0) catPickerPage.index = 0;
+}
+
+function catPickerVisibleIds(cats) {
+  syncCatPickerPage(cats);
+  const start = catPickerPage.index * catPickerPage.size;
+  return new Set(cats.slice(start, start + catPickerPage.size).map((c) => c.id));
+}
+
+function updateCatPickerPager(cats) {
+  const pager = $("catPickerPager");
+  if (!pager) return;
+  if (!cats.length || cats.length <= catPickerPage.size) {
+    pager.classList.add("hidden");
+    return;
+  }
+  pager.classList.remove("hidden");
+  const pages = Math.ceil(cats.length / catPickerPage.size);
+  const start = catPickerPage.index * catPickerPage.size + 1;
+  const end = Math.min(cats.length, start + catPickerPage.size - 1);
+  $("catPickerPageLabel").textContent = `${start}–${end} of ${cats.length} · page ${catPickerPage.index + 1}/${pages}`;
+  $("catPickerPrev").disabled = catPickerPage.index <= 0;
+  $("catPickerNext").disabled = catPickerPage.index >= pages - 1;
+}
+
+function createCatCardSlot() {
+  const card = document.createElement("div");
+  const img = document.createElement("img");
+  img.alt = "cat";
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const sel = document.createElement("button");
+  sel.type = "button";
+  sel.className = "cat-action";
+  sel.textContent = "Select";
+  sel.dataset.help = "cat.select";
+  const fol = document.createElement("button");
+  fol.type = "button";
+  fol.className = "cat-action follow";
+  fol.textContent = "Follow";
+  fol.dataset.help = "cat.follow";
+  card.append(img, meta, sel, fol);
+  return { card, img, meta, sel, fol, lastThumb: null, lastMeta: "" };
+}
+
+function ensureCatAutoRow(root) {
+  if (catPickerPool.autoRow) return catPickerPool.autoRow;
+  const row = document.createElement("div");
+  row.className = "cat-auto-row";
+  const auto = document.createElement("button");
+  auto.className = "btn ghost";
+  auto.textContent = "Auto (largest)";
+  auto.dataset.help = "cat.auto";
+  const autoF = document.createElement("button");
+  autoF.className = "btn ghost";
+  autoF.textContent = "Auto + FOLLOW";
+  autoF.dataset.help = "cat.auto_follow";
+  row.append(auto, autoF);
+  root.appendChild(row);
+  catPickerPool.autoRow = { row, auto, autoF };
+  return catPickerPool.autoRow;
+}
+
 function renderCatPicker(t) {
+  lastCatPickerT = t;
   const root = $("catPicker");
   const hint = $("catPickerHint");
   const cats = mergeCatCards(t);
   const preferred = t.preferred_target_id ?? null;
   const locked = t.target_id ?? null;
+  const perception = t.perception_available !== false;
   $("catPickerStatus").textContent = preferred != null ? `following id ${preferred}`
     : locked != null ? `locked id ${locked}` : "auto (largest)";
+
+  const liveIds = new Set(cats.map((c) => c.id));
+  pruneCatDistSmooth(liveIds);
+
   if (!cats.length) {
-    root.innerHTML = "";
+    for (const slot of catPickerPool.cards.values()) slot.card.remove();
+    catPickerPool.cards.clear();
+    catPickerPool.autoRow?.row.remove();
+    catPickerPool.autoRow = null;
+    catPickerPage.index = 0;
+    updateCatPickerPager(cats);
     hint.classList.remove("hidden");
     return;
   }
   hint.classList.add("hidden");
-  root.innerHTML = "";
-  const perception = t.perception_available !== false;
+
+  const visibleIds = catPickerVisibleIds(cats);
+  updateCatPickerPager(cats);
+
+  for (const [id, slot] of catPickerPool.cards) {
+    if (!liveIds.has(id)) {
+      slot.card.remove();
+      catPickerPool.cards.delete(id);
+    } else if (!visibleIds.has(id)) {
+      slot.card.classList.add("hidden");
+    }
+  }
+
   cats.forEach((c) => {
-    const card = document.createElement("div");
+    if (!visibleIds.has(c.id)) return;
+    let slot = catPickerPool.cards.get(c.id);
+    if (!slot) {
+      slot = createCatCardSlot();
+      catPickerPool.cards.set(c.id, slot);
+      root.insertBefore(slot.card, catPickerPool.autoRow?.row || null);
+    }
+
     const active = preferred === c.id || (preferred == null && (c.is_locked || locked === c.id));
-    card.className = "cat-card" + (active ? " active" : "") + (c.in_view === false ? " dim" : "");
-    const img = document.createElement("img");
-    img.alt = `cat ${c.id}`;
-    img.src = c.thumb_jpeg_b64 ? `data:image/jpeg;base64,${c.thumb_jpeg_b64}` : "";
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const dist = c.dist_m != null ? `${Math.round(c.dist_m * 100)} cm` : "—";
-    meta.textContent = `#${c.id} · ${dist} · conf ${(c.conf * 100).toFixed(0)}%`;
-    const sel = document.createElement("button");
-    sel.type = "button"; sel.className = "cat-action"; sel.textContent = "Select";
-    sel.dataset.help = "cat.select";
-    sel.disabled = !!t.estop || !perception;
-    sel.onclick = (e) => { e.stopPropagation(); wsSend({ type: "select_target", id: c.id, follow: false }); };
-    const fol = document.createElement("button");
-    fol.type = "button"; fol.className = "cat-action follow"; fol.textContent = "Follow";
-    fol.dataset.help = "cat.follow";
-    fol.disabled = !!t.estop || !perception;
-    fol.onclick = (e) => { e.stopPropagation(); wsSend({ type: "select_target", id: c.id, follow: true }); };
-    card.append(img, meta, sel, fol);
-    root.appendChild(card);
+    slot.card.className = "cat-card" + (active ? " active" : "") + (c.in_view === false ? " dim" : "");
+    slot.card.classList.remove("hidden");
+
+    if (c.thumb_jpeg_b64) {
+      if (slot.lastThumb !== c.thumb_jpeg_b64) {
+        slot.lastThumb = c.thumb_jpeg_b64;
+        slot.img.src = `data:image/jpeg;base64,${c.thumb_jpeg_b64}`;
+      }
+    } else if (slot.lastThumb !== null) {
+      slot.lastThumb = null;
+      slot.img.removeAttribute("src");
+    }
+    slot.img.alt = `cat ${c.id}`;
+
+    if (c.library_id != null) savedLibraryIds.set(c.id, c.library_id);
+    const libraryId = c.library_id ?? savedLibraryIds.get(c.id);
+    const distCm = c.dist_m != null
+      ? formatSmoothCm(catDistEma(c.id), c.dist_m * 100)
+      : "—";
+    const saved = libraryId != null ? ` · saved #${libraryId}` : "";
+    const metaText = `#${c.id} · ${distCm} · conf ${(c.conf * 100).toFixed(0)}%${saved}`;
+    if (slot.lastMeta !== metaText) {
+      slot.lastMeta = metaText;
+      slot.meta.textContent = metaText;
+    }
+
+    slot.sel.disabled = !!t.estop || !perception;
+    slot.fol.disabled = !!t.estop || !perception;
+    const cid = c.id;
+    if (!slot.sel._bound) {
+      slot.sel._bound = true;
+      slot.sel.onclick = (e) => {
+        e.stopPropagation();
+        wsSend({ type: "select_target", id: cid, follow: false });
+      };
+    }
+    if (!slot.fol._bound) {
+      slot.fol._bound = true;
+      slot.fol.onclick = (e) => {
+        e.stopPropagation();
+        wsSend({ type: "select_target", id: cid, follow: true });
+      };
+    }
   });
-  const row = document.createElement("div");
-  row.className = "cat-auto-row";
-  const auto = document.createElement("button");
-  auto.className = "btn ghost"; auto.textContent = "Auto (largest)";
-  auto.dataset.help = "cat.auto";
-  auto.disabled = !!t.estop || !perception || preferred == null;
-  auto.onclick = () => wsSend({ type: "select_target", id: "auto", follow: false });
-  const autoF = document.createElement("button");
-  autoF.className = "btn ghost"; autoF.textContent = "Auto + FOLLOW";
-  autoF.dataset.help = "cat.auto_follow";
-  autoF.disabled = !!t.estop || !perception || preferred == null;
-  autoF.onclick = () => wsSend({ type: "select_target", id: "auto", follow: true });
-  row.append(auto, autoF);
-  root.appendChild(row);
+
+  const autoRow = ensureCatAutoRow(root);
+  autoRow.auto.disabled = !!t.estop || !perception || preferred == null;
+  autoRow.autoF.disabled = !!t.estop || !perception;
+  if (!autoRow.auto._bound) {
+    autoRow.auto._bound = true;
+    autoRow.auto.onclick = () => wsSend({ type: "select_target", id: "auto", follow: false });
+  }
+  if (!autoRow.autoF._bound) {
+    autoRow.autoF._bound = true;
+    autoRow.autoF.onclick = () => wsSend({ type: "select_target", id: "auto", follow: true });
+  }
+
   if (window.ConsoleHelp) ConsoleHelp.rescan(root);
 }
 
 function renderPeripherals(t) {
-  const cm = t.sonar_display_cm != null && t.sonar_display_cm >= 0 ? t.sonar_display_cm
+  const rawCm = t.sonar_display_cm != null && t.sonar_display_cm >= 0 ? t.sonar_display_cm
     : t.gt_cm != null && t.gt_cm >= 0 ? t.gt_cm : null;
+  const cmDisplay = formatSmoothCm(uiSmooth.sonarCm, rawCm);
+  const cm = uiSmooth.sonarCm.value;
   const range = t.sonar_range_cm ?? 200;
   const zoneColors = { red: "#ef4444", yellow: "#eab308", green: "#22c55e", cyan: "#06b6d4", blue: "#3b82f6" };
   const zoneColor = zoneColors[t.sonar_zone] || "var(--muted)";
-  $("sonarReadout").textContent = cm != null ? `${cm} cm` : "—";
+  $("sonarReadout").textContent = cmDisplay;
   $("sonarReadout").style.color = zoneColor;
   $("sonarObstacle").classList.toggle("hidden", !t.sonar_obstacle);
   $("sonarNoEcho").classList.toggle("hidden", !t.sonar_no_echo);
   const fill = $("sonarZoneFill");
   fill.style.width = cm != null ? `${Math.min(100, (cm / range) * 100)}%` : "0%";
   fill.style.backgroundColor = zoneColor;
-  const modelCm = t.target_dist_m != null ? Math.round(t.target_dist_m * 100) : null;
+  const modelCm = t.target_dist_m != null ? Math.round(uiSmooth.targetDist.value ?? t.target_dist_m * 100) : null;
   const delta = cm != null && modelCm != null ? Math.abs(modelCm - cm) : null;
   $("sonarDelta").textContent = delta != null ? `Model ${modelCm} cm · Δ ${delta} cm vs sonar` : "";
   const orb = $("rgbOrb");
@@ -656,7 +1027,7 @@ function renderPeripherals(t) {
   const catIds = t.target_ids?.length ? t.target_ids.slice(0, 4).join("/") : t.target_id != null ? String(t.target_id) : null;
   $("lcdLine1").textContent = t.sonar_obstacle ? "OBSTACOL! h/j"
     : catIds ? `Cat id:${catIds}` : t.mode === "MANUAL" ? "Manual 0-200cm" : t.mode === "FOLLOW" ? "Follow 0-200cm" : "Dist 0-200cm";
-  $("lcdLine2").textContent = cm != null ? `${cm} cm / ${range}cm` : `--- / ${range}cm`;
+  $("lcdLine2").textContent = cmDisplay !== "—" ? `${cmDisplay} / ${range}cm` : `--- / ${range}cm`;
   const live = t.robot_connected && p;
   $("periphHint").textContent = live ? "CharBridge linked — toggles mirror firmware state."
     : !t.robot_connected ? "Connect the robot (USB @ 9600) to toggle peripherals."
@@ -1012,7 +1383,7 @@ async function startFlash() {
     }
     $("robotTarget").value = port;
     msg("flashMsg", "compiling and uploading… (can take 1–3 min on first run)", "ok");
-    msg("robotMsg", "robot disconnected for USB flash", "warn");
+    msg("robotMsg", "robot link released for USB flash (expected)", "ok");
     clearInterval(flashPoll);
     flashPoll = setInterval(pollFlashStatus, 1500);
     pollFlashStatus();
@@ -1032,6 +1403,8 @@ const flashBtn = $("flashFirmware");
 if (flashBtn) {
   flashBtn.addEventListener("click", () => { void startFlash(); });
   $("flashPort")?.addEventListener("change", updateFlashUi);
+  $("flashPortManual")?.addEventListener("input", updateFlashUi);
+  $("robotTarget")?.addEventListener("input", updateFlashUi);
   refreshFlashReadiness();
 }
 
@@ -1157,3 +1530,4 @@ chartSeed();
 
 if (window.ConsoleHelp) ConsoleHelp.init();
 connectWS();
+overlayPaintLoop();
