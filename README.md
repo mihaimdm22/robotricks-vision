@@ -11,6 +11,12 @@ Arduino robot to follow the cat at a safe distance.
 > run.** A Karpathy-style fine-tune is an optional, time-boxed stretch (see
 > [Training](#training)). Engineering rules in [`CLAUDE.md`](CLAUDE.md).
 
+> 📚 **Full documentation** — architecture deep-dives (with diagrams), API/config/CLI
+> reference, and a step-by-step install/link/test manual — lives in
+> **[`docs/README.md`](docs/README.md)**. New here? Start with the
+> [Architecture Overview](docs/architecture/overview.md) or the
+> [Install & Test Manual](docs/guides/install-and-test.md).
+
 ---
 
 ## What it does
