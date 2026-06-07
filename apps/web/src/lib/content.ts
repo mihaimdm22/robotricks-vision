@@ -13,9 +13,10 @@ export const RUN_LOCALLY = `${REPO}#web-control-panel`;
 export const nav = {
   links: [
     { label: "Features", href: "#features" },
-    { label: "How it works", href: "#how" },
+    { label: "Architecture", href: "#architecture" },
     { label: "Hardware", href: "#hardware" },
-    { label: "Docs", href: REPO },
+    { label: "Team", href: "#team" },
+    { label: "Docs", href: "#docs" },
   ],
   cta: { label: "View on GitHub", href: REPO },
 };
@@ -165,6 +166,202 @@ export const hardware: Hardware[] = [
   },
 ];
 
+/* ------------------------------------------------------------------ *
+ * Architecture — the pipeline, end to end (facts from the README).
+ * ------------------------------------------------------------------ */
+export type PipelineStage = { icon: IconName; label: string; note: string };
+
+export const pipeline: PipelineStage[] = [
+  { icon: "camera", label: "Capture", note: "One ordinary camera, RTSP or webcam." },
+  { icon: "target", label: "Undistort", note: "120° FOV / division model rectify." },
+  { icon: "target", label: "Detect", note: "YOLO11 or RT-DETR · COCO class 15." },
+  { icon: "fingerprint", label: "Track", note: "BoT-SORT + ReID · stable IDs." },
+  { icon: "ruler", label: "Distance", note: "Geometry ⊕ depth → m ± CI." },
+  { icon: "route", label: "Predict & follow", note: "Extrapolate, then drive the chassis." },
+];
+
+export type Approach = {
+  tag: string;
+  detector: string;
+  tracker: string;
+  pickWhen: string;
+};
+
+export const approaches: Approach[] = [
+  {
+    tag: "Approach A",
+    detector: "YOLO11s — CNN, fast",
+    tracker: "ByteTrack",
+    pickWhen: "Latency and command smoothness matter most.",
+  },
+  {
+    tag: "Approach B",
+    detector: "RT-DETR-l — transformer, NMS-free",
+    tracker: "BoT-SORT + ReID",
+    pickWhen: "Cluttered, occluded scenes where identity must survive.",
+  },
+];
+
+/** The distance-fusion explainer — why the number is honest. */
+export const fusion = {
+  eyebrow: "Honest distance",
+  title: "Two estimates, one number, a real interval",
+  geometry: {
+    label: "Geometry",
+    formula: "Z = fy · H_real / h_px",
+    body: "Pinhole math on the rectified frame with per-class size priors, down-weighted as boxes drift to the distorted edges.",
+  },
+  depth: {
+    label: "Metric depth",
+    formula: "Depth-Anything-V2 / UniDepthV2",
+    body: "A metric depth model sampled inside the box, ingesting the camera K for true scale and a per-pixel confidence.",
+  },
+  fused: {
+    label: "Fused",
+    formula: "confidence-weighted median ± CI",
+    body: "The two are fused into one median, with a confidence interval from estimator spread plus split-conformal residuals.",
+  },
+};
+
+/* ------------------------------------------------------------------ *
+ * Metrics — the frozen-metric doctrine made visible. These name what
+ * we optimize against a frozen eval; they are dimensions, not claims.
+ * ------------------------------------------------------------------ */
+export type Metric = { icon: IconName; value: string; label: string; body: string };
+
+export const metricsIntro = {
+  eyebrow: "The frozen metric",
+  title: "We only keep what moves the number",
+  intro:
+    "Every change runs against a frozen eval and is kept only if the metric improves — a keep/reject loop, no moving the goalposts. These are the dimensions we score.",
+};
+
+export const metrics: Metric[] = [
+  {
+    icon: "ruler",
+    value: "Distance MAE",
+    label: "the scored metric",
+    body: "Mean absolute error in meters on the hidden Go2 test set — the one number the challenge is graded on.",
+  },
+  {
+    icon: "gauge",
+    value: "Real-time",
+    label: "frames per second",
+    body: "The pipeline is profiled for FPS so the overlay, the JSON, and the robot all stay live.",
+  },
+  {
+    icon: "fingerprint",
+    value: "Track continuity",
+    label: "identity through occlusion",
+    body: "ReID keeps a cat's ID stable through full occlusion, measured as track breaks per sequence.",
+  },
+  {
+    icon: "wave",
+    value: "±1 cm",
+    label: "ultrasonic ground truth",
+    body: "An HC-SR04 confirms estimates live on the rig — “1.84 m” predicted next to “1.86 m” measured.",
+  },
+];
+
+/* ------------------------------------------------------------------ *
+ * Team. Photos are optional: drop apps/web/public/team/<slug>.jpg and
+ * it renders; until then each card shows a branded initials avatar.
+ * ------------------------------------------------------------------ */
+export type Member = {
+  slug: string;
+  name: string;
+  role: string;
+  link: string;
+  linkLabel: "LinkedIn" | "Profile";
+};
+
+export const teamIntro = {
+  eyebrow: "The team",
+  title: "Built by a four-person crew",
+  intro:
+    "Product and pitch, robot build, computer vision, and a robotics champion advising — Monsson 2026.",
+};
+
+export const team: Member[] = [
+  {
+    slug: "sergiu-ciausu",
+    name: "Sergiu Ciausu",
+    role: "Deck, landing, UI/UX & product",
+    link: "https://www.linkedin.com/in/sergiu-ciausu-475042399/",
+    linkLabel: "LinkedIn",
+  },
+  {
+    slug: "andrei-tutea",
+    name: "Andrei Iulian Tutea",
+    role: "Robot construction & tuning",
+    link: "https://www.linkedin.com/in/andrei-iulian-tutea-398344245/",
+    linkLabel: "LinkedIn",
+  },
+  {
+    slug: "david-marin",
+    name: "David Marin",
+    role: "Coding, computer vision & integrations",
+    link: "https://www.linkedin.com/in/marinmihaidavid/",
+    linkLabel: "LinkedIn",
+  },
+  {
+    slug: "rares-ilasoaia",
+    name: "Rares Ilasoaia",
+    role: "Robotics champion & advisory",
+    link: "https://www.infomatrix.ro/finalists2026/",
+    linkLabel: "Profile",
+  },
+];
+
+/* ------------------------------------------------------------------ *
+ * Documentation — go deeper. Links out to the repo's source of truth.
+ * ------------------------------------------------------------------ */
+export type DocLink = {
+  icon: IconName;
+  title: string;
+  body: string;
+  href: string;
+  cta: string;
+};
+
+export const docsIntro = {
+  eyebrow: "Documentation",
+  title: "Go deeper",
+  intro:
+    "Every claim on this page traces back to the repo — run instructions, the fact-checked design rationale, and the per-challenge architecture.",
+};
+
+export const docs: DocLink[] = [
+  {
+    icon: "book",
+    title: "README & quickstart",
+    body: "Install with uv, run distance on the Go2 stills, track on a video, or follow with the robot.",
+    href: `${REPO}#quickstart`,
+    cta: "Read the README",
+  },
+  {
+    icon: "layers",
+    title: "Research & architecture",
+    body: "The full, fact-checked design rationale: detectors, trackers, depth, and the distance fusion.",
+    href: `${REPO}/blob/main/docs/01-RESEARCH-ARCHITECTURE.md`,
+    cta: "Open the doc",
+  },
+  {
+    icon: "target",
+    title: "Audit & decisions",
+    body: "What we assumed, what we verified, and the trade-offs behind every scored choice.",
+    href: `${REPO}/blob/main/docs/00-AUDIT.md`,
+    cta: "Read the audit",
+  },
+  {
+    icon: "gauge",
+    title: "Changelog",
+    body: "Every release from the hack-a-ton entry to the maintained project — what changed and why.",
+    href: `${REPO}/blob/main/CHANGELOG.md`,
+    cta: "See the changelog",
+  },
+];
+
 export type FooterLink = { label: string; href: string };
 
 export const footer = {
@@ -181,19 +378,18 @@ export const footer = {
     {
       title: "Pipeline",
       links: [
-        { label: "Detection", href: "#how" },
-        { label: "Tracking", href: "#how" },
+        { label: "Architecture", href: "#architecture" },
+        { label: "Metrics", href: "#metrics" },
         { label: "Distance", href: "#features" },
-        { label: "Prediction", href: "#features" },
+        { label: "Hardware", href: "#hardware" },
       ] as FooterLink[],
     },
     {
-      title: "Hardware",
+      title: "Project",
       links: [
-        { label: "Tapo C211", href: "#hardware" },
-        { label: "Arduino Mega", href: "#hardware" },
-        { label: "HC-SR04", href: "#hardware" },
-        { label: "Go2", href: "#hardware" },
+        { label: "Team", href: "#team" },
+        { label: "Docs", href: "#docs" },
+        { label: "Research & architecture", href: `${REPO}/blob/main/docs/01-RESEARCH-ARCHITECTURE.md` },
       ] as FooterLink[],
     },
   ],
