@@ -153,18 +153,18 @@ function ConsoleBody() {
                 send={send}
                 onRequestControl={() => send({ type: "request_control" })}
               />
-              <CatPickerPanel
-                telemetry={telemetry}
-                send={send}
-                estopped={estopped}
-                onOpenLibrary={() => setTab("cats")}
-              />
               <PeripheralsPanel
                 telemetry={telemetry}
                 send={send}
                 controllable={
                   !!telemetry?.robot_connected && telemetry?.peripherals != null
                 }
+              />
+              <CatPickerPanel
+                telemetry={telemetry}
+                send={send}
+                estopped={estopped}
+                onOpenLibrary={() => setTab("cats")}
               />
             </div>
           )}
