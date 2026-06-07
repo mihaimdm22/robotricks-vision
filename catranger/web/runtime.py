@@ -440,8 +440,11 @@ class RobotRuntime:
             thumb = base64.standard_b64decode(thumb_b64)
         except Exception:
             return
+        lib_id = self._tracker_to_library.get(tid)
+        if lib_id is None:
+            lib_id = self.cat_library.match_by_thumb(thumb, threshold=self._match_threshold)
         lib_id = self.cat_library.upsert_sighting(
-            library_id=self._tracker_to_library.get(tid),
+            library_id=lib_id,
             tracker_id=tid,
             thumb_jpeg=thumb,
             conf=float(card.get("conf", 0.0)),
@@ -1192,7 +1195,8 @@ class RobotRuntime:
     def flash_readiness(self) -> dict:
         from catranger.hw.arduino_flash import readiness
 
-        return {"ok": True, **readiness()}
+        ready = readiness()
+        return {"ok": bool(ready.get("ok")), **ready}
 
     def start_flash(self, port: str | None = None) -> dict:
         """Compile + upload cat_ranger.ino via arduino-cli. Disconnects the robot

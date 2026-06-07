@@ -21,38 +21,50 @@
     </div>
     <div id="simBanner" class="sim-banner sim">SIMULATION</div>
     <div id="modeBadge" class="mode-badge mode-IDLE">IDLE</div>
+    <div id="linkBadge" class="link-badge hidden"></div>
     <div class="spacer"></div>
-    <button id="resetBtn" class="btn reset hidden">ARM / RESET</button>
-    <button id="estopBtn" class="btn estop">■ E-STOP</button>
+    <button id="resetBtn" class="btn reset hidden" data-help="safety.reset">ARM / RESET</button>
+    <button id="estopBtn" class="btn estop" data-help="safety.estop">■ E-STOP</button>
   </header>
 
   <!-- stop-reason banner: ALWAYS tells the operator WHY the robot is stopped -->
   <div id="stopBanner" class="stop-banner hidden"></div>
-
-  <div id="consoleBanner" class="console-banner">
-    This is the legacy panel. For the <strong>cat library</strong>, cat picker, and CV jobs, open the
-    <a id="consoleLink" href="/console">full console</a> (<code>http://localhost:3000/console</code> —
-    run <code>make web</code> or <code>pnpm dev</code> in <code>apps/web</code>).
-  </div>
+  <div id="nackToast" class="nack-toast hidden" role="status"></div>
 
   <main>
     <section class="video-col">
       <div class="video-wrap">
         <img id="video" src="/video" alt="live video" />
+        <canvas id="overlay" class="overlay-canvas" aria-hidden="true"></canvas>
+        <div class="ptz-card ptz-overlay" aria-label="Camera pan/tilt">
+          <div class="ptz-head">
+            <span class="ptz-label" data-help-section="section.ptz">PTZ</span>
+            <span id="ptzHint" class="hint-inline"></span>
+          </div>
+          <div class="ptz-grid">
+            <button type="button" class="btn ptz" data-ptz="up" data-help="ptz.up">▲</button>
+            <button type="button" class="btn ptz" data-ptz="left" data-help="ptz.left">◀</button>
+            <button type="button" class="btn ptz" data-ptz="home" data-help="ptz.home">⌂</button>
+            <button type="button" class="btn ptz" data-ptz="right" data-help="ptz.right">▶</button>
+            <button type="button" class="btn ptz" data-ptz="down" data-help="ptz.down">▼</button>
+          </div>
+        </div>
         <div id="staleOverlay" class="stale-overlay hidden">VIDEO STALE — no fresh frames</div>
       </div>
       <!-- primary safety/telemetry strip (glanceable) -->
       <div class="primary-strip">
-        <div class="stat"><span class="k">DISTANCE</span><span id="dist" class="v">—</span></div>
-        <div class="stat"><span class="k">GROUND TRUTH</span><span id="gt" class="v">—</span></div>
-        <div class="stat"><span class="k">TARGET</span><span id="target" class="v">—</span></div>
+        <div class="stat" data-help="telemetry.distance"><span class="k">DISTANCE</span><span id="dist" class="v">—</span><span id="distWarn" class="stat-warn hidden">~ uncalibrated</span></div>
+        <div class="stat" data-help="telemetry.ground_truth"><span class="k">GROUND TRUTH</span><span id="gt" class="v">—</span></div>
+        <div class="stat" data-help="telemetry.target"><span class="k">TARGET</span><span id="target" class="v">—</span></div>
       </div>
       <!-- secondary diagnostics (small) -->
       <div class="diag" id="diag">
-        <span id="fps">FPS —</span>
-        <span id="camPill" class="pill">camera —</span>
-        <span id="robotPill" class="pill">robot —</span>
-        <span id="modelPill" class="pill">model —</span>
+        <span id="fps" data-help="telemetry.fps">FPS —</span>
+        <span id="camPill" class="pill" data-help="telemetry.camera_pill">camera —</span>
+        <span id="robotPill" class="pill" data-help="telemetry.robot_pill">robot —</span>
+        <span id="modelPill" class="pill" data-help="telemetry.model_pill">model —</span>
+        <span id="evalPill" class="pill hidden">eval —</span>
+        <span id="trainPill" class="pill hidden">train —</span>
       </div>
       <!-- live distance history (model estimate ± CI vs HC-SR04 ground truth) -->
       <div class="chart-card">
@@ -69,29 +81,94 @@
 
     <section class="panel-col">
       <nav class="tabs">
-        <button class="tab active" data-tab="control">Control</button>
-        <button class="tab" data-tab="models">Models</button>
-        <button class="tab" data-tab="connections">Connections</button>
-        <button class="tab" data-tab="eval">Eval</button>
+        <button class="tab active" data-tab="control" data-help="tab.control">Control</button>
+        <button class="tab" data-tab="cats" data-help="tab.cats">Cats</button>
+        <button class="tab" data-tab="models" data-help="tab.models">Models</button>
+        <button class="tab" data-tab="connections" data-help="tab.connections">Connections</button>
+        <button class="tab" data-tab="cv" data-help="tab.cv">CV</button>
       </nav>
 
       <!-- CONTROL -->
       <div class="tabpane active" data-pane="control">
         <div class="modes">
-          <button class="btn mode-btn" data-mode="IDLE">IDLE</button>
-          <button class="btn mode-btn" data-mode="MANUAL">MANUAL</button>
-          <button class="btn mode-btn" data-mode="FOLLOW">FOLLOW</button>
+          <button class="btn mode-btn" data-mode="IDLE" data-help="mode.idle">IDLE</button>
+          <button class="btn mode-btn" data-mode="MANUAL" data-help="mode.manual">MANUAL</button>
+          <button class="btn mode-btn" data-mode="FOLLOW" data-help="mode.follow">FOLLOW</button>
         </div>
-        <p class="hint" id="driveHint">Switch to MANUAL to drive. Hold a button or use W/A/S/D.</p>
+        <div class="drive-head">
+          <span id="observerBadge" class="observer-badge hidden">Observer</span>
+          <p class="hint" id="driveHint">Switch to MANUAL to drive. Hold a button or use W/A/S/D.</p>
+        </div>
+        <button type="button" id="requestControlBtn" class="btn hidden" data-help="drive.request_control">Request control</button>
         <div id="drivepad" class="drivepad disabled">
-          <button class="dbtn" data-act="forward" style="grid-area:up">▲</button>
-          <button class="dbtn" data-act="left" style="grid-area:left">◀</button>
-          <button class="dbtn stop" data-act="stop" style="grid-area:mid">STOP</button>
-          <button class="dbtn" data-act="right" style="grid-area:right">▶</button>
-          <button class="dbtn" data-act="back" style="grid-area:down">▼</button>
+          <button class="dbtn" data-act="forward" data-help="drive.forward" style="grid-area:up">▲</button>
+          <button class="dbtn" data-act="left" data-help="drive.left" style="grid-area:left">◀</button>
+          <button class="dbtn stop" data-act="stop" data-help="drive.stop" style="grid-area:mid">STOP</button>
+          <button class="dbtn" data-act="right" data-help="drive.right" style="grid-area:right">▶</button>
+          <button class="dbtn" data-act="back" data-help="drive.back" style="grid-area:down">▼</button>
         </div>
-        <label class="slider">Speed <input id="speed" type="range" min="0.1" max="1" step="0.1" value="0.6" /></label>
-        <label class="slider">Camera pan <input id="pan" type="range" min="-1" max="1" step="0.05" value="0" /></label>
+        <label class="slider" data-help="drive.speed">Speed <input id="speed" type="range" min="0.1" max="1" step="0.1" value="0.6" /><span id="speedVal" class="slider-val">0.6</span></label>
+        <label class="slider" data-help="drive.body_yaw">Body yaw <input id="bodyYaw" type="range" min="-1" max="1" step="0.05" value="0" disabled /><span id="yawVal" class="slider-val">0</span></label>
+
+        <div class="section-head">
+          <span class="section-title" data-help-section="section.cats">Cats in view</span>
+          <span id="catPickerStatus" class="hint-inline"></span>
+          <button type="button" class="btn ghost mini" id="openCatsTab">Saved cats →</button>
+        </div>
+        <div id="catPicker" class="cat-picker"></div>
+        <p id="catPickerHint" class="hint">Connect a model and camera to see live cat cards.</p>
+
+        <div class="section-head"><span class="section-title" data-help-section="section.peripherals">Rig sensors &amp; peripherals</span></div>
+        <div id="periphPanel" class="periph-panel">
+          <div class="periph-grid">
+            <div class="periph-block">
+              <span class="k">HC-SR04 ultrasonic</span>
+              <div class="sonar-row">
+                <span id="sonarReadout" class="sonar-val">—</span>
+                <span id="sonarObstacle" class="sonar-badge hidden">obstacle</span>
+              </div>
+              <p id="sonarNoEcho" class="hint hidden">Sensor out of range (holding last reading)</p>
+              <div class="zone-bar"><div id="sonarZoneFill" class="zone-fill"></div></div>
+              <p id="sonarDelta" class="hint"></p>
+            </div>
+            <div class="periph-block periph-rgb-row">
+              <div id="rgbOrb" class="rgb-orb" aria-label="RGB distance indicator"></div>
+              <div>
+                <span class="k">RGB LED</span>
+                <p class="hint">Red ≤40 · yellow ≤80 · green ≤120 · cyan ≤160 · blue farther</p>
+              </div>
+            </div>
+            <div class="periph-block periph-inline">
+              <span class="k">Buzzer</span>
+              <span id="buzzerState" class="v">off</span>
+            </div>
+            <div class="periph-block">
+              <span class="k">LCD mirror</span>
+              <div id="lcdLine1" class="lcd-line">Dist 0-200cm</div>
+              <div id="lcdLine2" class="lcd-line dim">--- / 200cm</div>
+            </div>
+          </div>
+          <div class="periph-btns">
+            <button type="button" class="btn ghost periph" data-periph="buzzer_toggle" data-help="periph.buzzer">Buzzer</button>
+            <button type="button" class="btn ghost periph" data-periph="rgb_toggle" data-help="periph.rgb">RGB</button>
+            <button type="button" class="btn ghost periph" data-periph="lcd_toggle" data-help="periph.lcd">LCD</button>
+            <button type="button" class="btn ghost periph" data-periph="all_on" data-help="periph.all_on">All on</button>
+            <button type="button" class="btn ghost periph" data-periph="all_off" data-help="periph.all_off">All off</button>
+          </div>
+          <p id="periphHint" class="hint">Connect CharBridge firmware to toggle on-rig feedback.</p>
+        </div>
+      </div>
+
+      <!-- CATS -->
+      <div class="tabpane" data-pane="cats">
+        <div class="section-head">
+          <span class="section-title" data-help-section="section.cat_library">Saved cat library</span>
+          <button type="button" class="btn ghost" id="catsRefresh">Refresh</button>
+        </div>
+        <p class="hint">Cats are saved automatically when they appear on camera. Use <strong>Find</strong> to re-acquire one that left the frame.</p>
+        <div id="catsFinding" class="conn-msg hidden"></div>
+        <div id="catsMsg" class="conn-msg"></div>
+        <ul id="catLibrary" class="cat-library"></ul>
       </div>
 
       <!-- MODELS -->
@@ -105,13 +182,31 @@
         <div class="conn-group">
           <h3>Camera (wireless)</h3>
           <input id="camSpec" type="text" placeholder="synthetic | 0 | rtsp://user:pass@ip:554/stream1" />
-          <button class="btn" id="camConnect">Connect</button>
-          <button class="btn ghost" id="camDisconnect">Use synthetic</button>
+          <label class="row-label" data-help="conn.camera_profile">Profile
+            <select id="camProfile">
+              <option value="go2_1080p">go2_1080p</option>
+              <option value="tapo_c211">tapo_c211</option>
+            </select>
+          </label>
+          <button class="btn" id="camConnect" data-help="conn.camera_connect">Connect</button>
+          <button class="btn ghost" id="camDisconnect" data-help="conn.camera_synthetic">Use synthetic</button>
           <div id="camMsg" class="conn-msg"></div>
         </div>
         <div class="conn-group">
+          <h3>Distance calibration (HC-SR04)</h3>
+          <label class="row-label" data-help="conn.sonar_offset">Sensor → camera offset (mm)
+            <input id="sonarBaseline" type="number" value="90" min="0" step="1" />
+          </label>
+          <button class="btn" id="sonarCal" data-help="conn.sonar_calibrate">Calibrate (~5 s)</button>
+          <button class="btn ghost" id="sonarPreview" data-help="conn.sonar_preview">Preview</button>
+          <div id="sonarMsg" class="conn-msg"></div>
+        </div>
+        <div class="conn-group">
           <h3>Robot (Bluetooth / USB)</h3>
-          <select id="robotConn">
+          <button class="btn ghost" id="robotDiscover" data-help="conn.robot_scan">Scan ports</button>
+          <div id="discoverHint" class="hint"></div>
+          <ul id="portList" class="port-list"></ul>
+          <select id="robotConn" data-help="conn.robot_type">
             <option value="dummy">dummy (simulation)</option>
             <option value="bt">bt — HC-05 SPP (9600)</option>
             <option value="ble">ble — HM-10</option>
@@ -119,20 +214,95 @@
           </select>
           <input id="robotTarget" type="text" placeholder="/dev/cu.HC-05... or BLE address" />
           <input id="robotBaud" type="number" value="115200" />
-          <button class="btn" id="robotConnect">Connect</button>
-          <button class="btn ghost" id="robotDisconnect">Disconnect</button>
+          <button class="btn" id="robotConnect" data-help="conn.robot_connect">Connect</button>
+          <button class="btn ghost" id="robotDisconnect" data-help="conn.robot_disconnect">Disconnect</button>
           <div id="robotMsg" class="conn-msg"></div>
+        </div>
+        <div class="conn-group">
+          <h3>Firmware flash (USB)</h3>
+          <p class="hint">Uploads <code>arduino/cat_ranger</code> via arduino-cli. Scan ports, pick the Arduino USB device (<code>/dev/cu.*</code> on macOS), then flash. The robot link disconnects during upload.</p>
+          <button class="btn ghost" id="flashDiscover">Scan USB ports</button>
+          <label class="row-label">Flash port (required)
+            <select id="flashPort"><option value="">— scan ports first —</option></select>
+          </label>
+          <button class="btn" id="flashFirmware" disabled data-help="conn.robot_flash">Flash firmware (USB)</button>
+          <div id="flashHint" class="hint"></div>
+          <div id="flashMsg" class="conn-msg"></div>
+          <pre id="flashLog" class="flash-log hidden" aria-live="polite"></pre>
         </div>
       </div>
 
-      <!-- EVAL (reserved) -->
-      <div class="tabpane" data-pane="eval">
-        <p class="hint">The eval tab is reserved for a follow-up. For now run
-          <code>make eval</code> from the CLI.</p>
+      <!-- CV -->
+      <div class="tabpane" data-pane="cv">
+        <div class="cv-subtabs">
+          <button type="button" class="btn cv-sub active" data-cv="eval" data-help="cv.sub.eval">Eval</button>
+          <button type="button" class="btn cv-sub" data-cv="train" data-help="cv.sub.training">Training</button>
+        </div>
+        <div id="cvEval" class="cv-pane">
+          <p class="hint">Run perception metrics on a video folder or image directory. Robot must be IDLE.</p>
+          <label class="row-label">Source (image dir / video — not webcam)
+            <input id="evalSource" type="text" placeholder="path to images/ or video file" value="data/raw/how_far" />
+          </label>
+          <div class="cv-row">
+            <label class="row-label">Approach
+              <select id="evalApproach"><option value="A">A — YOLO11</option><option value="B">B — RT-DETR</option></select>
+            </label>
+            <label class="row-label">Max frames (0 = all)
+              <input id="evalMaxFrames" type="number" value="0" min="0" />
+            </label>
+            <label class="row-label inline-check"><input id="evalUseDepth" type="checkbox" /> depth net</label>
+          </div>
+          <div class="cv-actions">
+            <button class="btn" id="evalRun" data-help="eval.run">Run eval</button>
+            <button class="btn ghost" id="evalCancel" data-help="eval.cancel">Cancel</button>
+            <span id="evalProgress" class="hint-inline"></span>
+          </div>
+          <div id="evalStatus" class="conn-msg"></div>
+          <div id="evalMetrics" class="metrics-grid hidden"></div>
+          <details id="evalReportWrap" class="report-wrap hidden">
+            <summary>Full report.md</summary>
+            <pre id="evalReport" class="report-pre"></pre>
+          </details>
+        </div>
+        <div id="cvTrain" class="cv-pane hidden">
+          <div id="trainReadiness" class="readiness-strip">checking readiness…</div>
+          <p class="hint">Prepare dataset, train, or autoresearch. Heavy jobs require IDLE mode.</p>
+          <label class="row-label">Kind
+            <select id="trainKind">
+              <option value="prepare">prepare — build dataset</option>
+              <option value="train">train — fine-tune</option>
+              <option value="autoresearch">autoresearch — keep/reject</option>
+            </select>
+          </label>
+          <div class="cv-row">
+            <label class="row-label">Device
+              <select id="trainDevice"><option value="auto">auto</option><option value="cuda">cuda</option><option value="mps">mps</option><option value="cpu">cpu</option></select>
+            </label>
+            <label class="row-label" id="trainEpochsWrap">Epochs (0 = default)
+              <input id="trainEpochs" type="number" value="0" min="0" />
+            </label>
+            <label class="row-label hidden" id="trainSourceWrap">Prepare source
+              <select id="trainSource"><option value="manual">manual</option><option value="roboflow">roboflow</option><option value="openimages">openimages</option></select>
+            </label>
+          </div>
+          <div class="cv-actions">
+            <button class="btn" id="trainRun" data-help="train.run">Run</button>
+            <button class="btn ghost" id="trainCancel" data-help="train.stop">Stop</button>
+            <span id="trainBlockReason" class="hint-inline warn"></span>
+          </div>
+          <div id="trainStatus" class="conn-msg"></div>
+          <pre id="trainLog" class="train-log hidden"></pre>
+          <div id="trainHistoryWrap" class="hidden">
+            <div class="section-head"><span class="section-title">Run history</span></div>
+            <ul id="trainHistory" class="train-history"></ul>
+            <div id="trainPromoteMsg" class="conn-msg"></div>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
+  <script src="/static/help.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

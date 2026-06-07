@@ -36,11 +36,6 @@ export function CatLibraryTab({
     setError(null);
     try {
       const res = await api.listCats();
-      if (!res.ok) {
-        setError(res.problem + (res.fix ? ` — ${res.fix}` : ""));
-        setCats([]);
-        return;
-      }
       setCats(res.cats);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load cat library");

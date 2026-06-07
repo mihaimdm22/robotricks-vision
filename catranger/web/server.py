@@ -24,7 +24,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
-    RedirectResponse,
     Response,
     StreamingResponse,
 )
@@ -180,9 +179,9 @@ def create_app(runtime: Any) -> FastAPI:
         return FileResponse(_STATIC / "index.html")
 
     @app.get("/console")
-    def console_redirect() -> RedirectResponse:
-        """Send operators to the Next.js console (Cats tab, cat picker, CV jobs)."""
-        return RedirectResponse(url=console_url, status_code=302)
+    def console_panel() -> FileResponse:
+        """Same-origin control panel (MJPEG + cat library + CV jobs)."""
+        return FileResponse(_STATIC / "index.html")
 
     @app.get("/api/console_url")
     def console_url_api() -> dict:
@@ -551,9 +550,14 @@ def create_app(runtime: Any) -> FastAPI:
                     continue
 
                 if kind == "heartbeat":
-                    arbiter.heartbeat(cid)  # keep the token lease alive
+                    # Auto-claim a free token (same as the first drive intent) so
+                    # idle MANUAL heartbeats refresh the watchdog — otherwise the
+                    # banner flickers WATCHDOG/NONE while the operator isn't pressing.
+                    if arbiter.holder is None:
+                        arbiter.claim(cid)
+                    arbiter.heartbeat(cid)
                     if arbiter.is_holder(cid):
-                        runtime.heartbeat()  # refresh the MANUAL watchdog
+                        runtime.heartbeat()
                     continue
 
                 if kind == "peripheral":
