@@ -1,0 +1,34 @@
+# CatRanger dataset registry (WS-C2) — the datasets `catranger.train.prepare` can acquire
+# and format to data/cat/ (Ultralytics layout, single class cat = 0). Mirrors
+# configs/models.yaml: add a dataset = add an entry here, then
+#   python -m catranger.train.prepare --dataset <id>      (or: make prepare DATASET=<id>)
+#
+# Sources (see catranger/train/prepare.py): manual | openimages | roboflow.
+# Numbers/handles live here, never hard-coded (Karpathy rule 5).
+
+default: manual
+
+datasets:
+  - id: manual
+    name: "Manual scaffold (no download)"
+    source: manual
+    notes: "Scaffolds data/cat/ dirs + prints labeling instructions. No deps; always works."
+
+  - id: openimages-cat
+    name: "Open Images V7 — Cat"
+    source: openimages
+    params:
+      classes: ["Cat"]
+      max_samples: 2000
+    notes: "fiftyone pulls 'Cat' detection boxes, exports YOLO. Needs `uv sync --extra train`."
+
+  # Example Roboflow dataset — copy a cat-detection project's slugs from Universe:
+  # - id: roboflow-low-angle-cats
+  #   name: "Roboflow — low-angle cats"
+  #   source: roboflow
+  #   params:
+  #     workspace: your-workspace
+  #     project: your-project
+  #     version: 1
+  #     api_key_env: ROBOFLOW_API_KEY
+  #   notes: "Needs `uv sync --extra train` + $ROBOFLOW_API_KEY."

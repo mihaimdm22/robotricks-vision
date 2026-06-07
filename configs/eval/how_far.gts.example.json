@@ -1,0 +1,8 @@
+{
+  "_README": "WS-D0.1 distance ground-truth TEMPLATE. Copy to data/eval/how_far.gts.json (data/ is gitignored) and replace the placeholder values with REAL measurements, then: make eval SOURCE=data/raw/how_far GTS=data/eval/how_far.gts.json. Keys are 0-based frame indices in catranger.io.image_files() order (the same order frame_source yields). Values are the true camera->object distance in METERS. The provided how_far stills ship UNLABELED; tape-measure or read the HC-SR04 to fill these in. Indices with no entry are simply not scored.",
+  "by_index": {
+    "0": 1.50,
+    "1": 2.30,
+    "2": 0.95
+  }
+}

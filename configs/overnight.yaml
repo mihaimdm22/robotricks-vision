@@ -6,6 +6,18 @@
 # SKIPPED automatically if the cat dataset isn't prepared (baseline-first), and the eval
 # jobs still run on the pretrained baseline. Per-trial time budget lives in
 # configs/train.yaml (autoresearch.budget_min); training device lives there too (mps).
+
+# WS-A3 watchdog: per-job wall-clock cap in MINUTES. 0/omitted = no cap. On timeout the
+# whole job process group is killed (no orphaned dataloader workers / leaked GPU memory)
+# and the job is recorded with status "timeout"; the night continues. Override per-job
+# with `timeout_min:` (autoresearch sweeps can be long — leave them uncapped or generous).
+job_timeout_min: 0
+
+# WS-A5 retry: a TRANSIENT failure (timeout, CUDA/MPS OOM, transient I/O) is retried with
+# capped exponential backoff up to this many attempts; a PERMANENT one (bad config, missing
+# dataset, import error) fails immediately. Also bounds crash-recovery requeues (WS-A2).
+max_attempts: 3
+
 jobs:
   # 1) Fixed-budget keep/reject fine-tune sweep (winner -> runs/train/best_trial.json).
   - kind: autoresearch
@@ -17,8 +29,10 @@ jobs:
     config: cat_distance
     approach: A        # YOLO11 (CNN)
     device: mps
+    timeout_min: 30    # evals over the stills are quick; kill if wedged past 30 min
   - kind: eval
     source: data/raw/how_far
     config: cat_distance
     approach: B        # RT-DETR (transformer)
     device: mps
+    timeout_min: 30

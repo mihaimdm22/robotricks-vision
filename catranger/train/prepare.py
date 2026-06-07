@@ -24,9 +24,12 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:  # avoid a runtime import cycle (datasets.py imports source_names below)
+    from catranger.datasets import DatasetProfile
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Single source of truth for where the formatted dataset lands.
@@ -221,6 +224,25 @@ _SOURCES = {
 }
 
 
+def source_names() -> frozenset[str]:
+    """Registered dataset-source names — the source of truth configs/datasets.yaml is
+    validated against (catranger.datasets), so adding a source here is a one-file change."""
+    return frozenset(_SOURCES)
+
+
+def prepare_from_profile(profile: DatasetProfile) -> Path:
+    """Acquire/format the dataset described by a DatasetProfile (configs/datasets.yaml),
+    reusing the exact same source adapters as the config-driven path."""
+    src = profile.source
+    if src not in _SOURCES:  # defensive; the registry already validates against source_names()
+        raise SystemExit(f"unknown dataset source {src!r}; choose one of {sorted(_SOURCES)}")
+    cfg = {"dataset": {"source": src, src: dict(profile.params)}}
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    data_yaml = _SOURCES[src](cfg)
+    print(f"[prepare] dataset {profile.id!r} ({src}) -> {data_yaml}")
+    return data_yaml
+
+
 def prepare(config_path: str = "configs/train.yaml", source: str | None = None) -> Path:
     """Acquire/format the dataset and return the path to data/cat/data.yaml."""
     cfg = _load_config(config_path)
@@ -243,7 +265,27 @@ def main(argv: list[str] | None = None) -> int:
         choices=sorted(_SOURCES),
         help="override dataset.source from the config",
     )
+    ap.add_argument(
+        "--dataset",
+        default=None,
+        help="dataset id from configs/datasets.yaml (WS-C2; overrides --config/--source)",
+    )
+    ap.add_argument(
+        "--datasets-config",
+        default="configs/datasets.yaml",
+        help="dataset registry path (used with --dataset)",
+    )
     args = ap.parse_args(argv)
+    if args.dataset:
+        from catranger.datasets import DatasetRegistry
+
+        try:
+            profile = DatasetRegistry.from_yaml(args.datasets_config).get(args.dataset)
+        except KeyError as exc:
+            print(f"[prepare] {exc}")
+            return 1
+        prepare_from_profile(profile)
+        return 0
     prepare(args.config, args.source)
     return 0
 

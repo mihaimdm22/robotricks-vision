@@ -47,6 +47,21 @@ def test_image_dir_yielded_in_natural_order(tmp_path, monkeypatch) -> None:
     assert len(out) == 3
 
 
+def test_image_files_natural_order_and_filters(tmp_path) -> None:
+    # listing only (no cv2): keep image exts, drop others, natural-sort by number.
+    for name in ["frame10.jpg", "frame2.JPG", "frame1.png", "notes.txt", "clip.mp4"]:
+        (tmp_path / name).write_bytes(b"x")
+    names = [f.name for f in io.image_files(tmp_path)]
+    assert names == ["frame1.png", "frame2.JPG", "frame10.jpg"]
+
+
+def test_image_files_non_directory_returns_empty(tmp_path) -> None:
+    f = tmp_path / "single.jpg"
+    f.write_bytes(b"x")
+    assert io.image_files(f) == []
+    assert io.image_files(tmp_path / "missing") == []
+
+
 def test_unreadable_image_raises_file_not_found(tmp_path, monkeypatch) -> None:
     pytest.importorskip("cv2")
     monkeypatch.setattr(io.cv2, "imread", lambda _p: None)
