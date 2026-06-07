@@ -2,6 +2,52 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.5.0] - 2026-06-07
+
+The "10x" reliability + extensibility release: unattended runs survive crashes, the
+scored metric is measurable and gated, models/datasets are pluggable, and the live
+console gains crisp overlays — merged with the v0.4.0 local-control app (CV/Training +
+Tapo). The scored perception core (`intrinsics/distance/detect/depth/track/pipeline`)
+stays surgical; new work is tooling/web/tests (CLAUDE.md maintenance scope). Planned and
+reviewed via `/autoplan` (`docs/02-CATRANGER-10X-PLAN.md`).
+
+### Added
+- **Failure recovery (WS-A).** Durable SQLite job queue (`catranger/jobqueue.py`) with
+  owner-scoped crash recovery: re-running `make overnight` resumes — completed jobs are
+  skipped, a job left running by a crash is recovered, and transient failures retry with
+  capped exponential backoff. A per-job wall-clock timeout kills the whole process group
+  (`catranger/proc.py`), so a hung job/dataloader can't hang the night. Crash-safe
+  artifacts (temp + `os.replace` + sha256, `history.py`). Training resume from `last.pt`
+  (`train --resume`). The live queue is observable via `make jobs` / `GET /api/jobs`.
+- **Prove the number (WS-D0).** A distance ground-truth sidecar (`make eval GTS=…`,
+  template `configs/eval/how_far.gts.example.json`) makes distance MAE measurable, and a
+  scored keep/reject harness (`make keepreject`) gates a config change on the FROZEN
+  metrics (distance MAE, FPS, continuity, smoothness) — separate from the mAP autoresearch
+  loop. First metric mover: a config-gated eroded-box depth median (`depth.box_erosion`).
+- **Pluggable models & datasets (WS-C).** Detector backends are a builder dict in
+  `detect.py` (no second list to keep in sync); a `configs/datasets.yaml` registry mirrors
+  `models.yaml`; one model home (`--model` / `apply_profile`) so a fine-tune added once is
+  visible to both the CLI and the web console. "Extending CatRanger" recipes in CONTRIBUTING.
+- **Live console overlays (WS-B).** A crisp target ring + distance/ID/bearing labels and
+  arbitrated, debounced failure badges drawn on a `<canvas>` over the MJPEG frame, from a
+  new per-detection overlay-JSON contract on the telemetry socket. Object-contain
+  alignment + badge logic unit-tested (vitest, `make web-test`).
+
+### Changed
+- Web training (the v0.4.0 CV tab) now flows through the durable job queue (`owner='web'`)
+  like eval — recorded, heartbeated, and settled — so a training run shows in `/api/jobs`
+  / `make jobs` and an interrupted run is surfaced on restart. Eval and training share one
+  durable row + heartbeat (they are mutually exclusive on the single heavy-job slot).
+- `_build_ranger` now loads a fresh `AppConfig` per model swap and re-anchors the camera
+  profile through the shared `apply_profile` helper — so no stale class filter or camera
+  leaks across swaps, and a failed build never leaves a half-mutated config.
+
+### Fixed
+- Switching models no longer leaks a prior model's class filter (which would silently drop
+  every detection — a zero-recall failure). The console `BadgeDebouncer` no longer grows
+  unbounded as tracks come and go. `proc.run_capped` bounds its post-kill pipe drain so a
+  detached grandchild can't hang the runner.
+
 ## [0.4.0] - 2026-06-07
 
 Local control app: a full in-browser **CV/Training** tab and **Tapo C211** camera
