@@ -48,7 +48,7 @@ class _OnvifPtz:
         if self._ptz is not None:
             return
         try:
-            from onvif import ONVIFCamera  # type: ignore[import-untyped]
+            from onvif import ONVIFCamera
         except Exception as e:  # pragma: no cover - optional dep
             raise RuntimeError(
                 "onvif-zeep is required for Tapo pan/tilt "

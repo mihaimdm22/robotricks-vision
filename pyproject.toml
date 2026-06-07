@@ -124,6 +124,7 @@ module = [
     "roboflow.*",
     "fiftyone.*",
     "pytapo.*",
+    "onvif.*",
     "serial.*",
     "bleak.*",
     # web extra: optional, not installed in the base lint/type CI leg
