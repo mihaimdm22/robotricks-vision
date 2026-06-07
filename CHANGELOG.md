@@ -2,6 +2,38 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.7.0] - 2026-06-07
+
+Integrate the team's **tested, on-the-rig** Arduino firmware (Adafruit Motor Shield,
+single-char protocol) with the perception host, without rewriting the proven drive
+logic. The host can now drive that rig and read its live HC-SR04 ground truth — pure
+live-demo capability; the scored perception core is untouched (CLAUDE.md maintenance
+scope). Also reconciles `pyproject.toml` (was 0.5.0) forward to the project version.
+
+### Added
+- **`CharBridge`** (`catranger/hw/char_bridge.py`) — host-side adapter that quantizes
+  the smooth `Follower` command into the tested firmware's discrete `b/f/h/j`
+  vocabulary, exposed through the existing `send`/`read_distance_cm`/`close` bridge
+  contract so the already-bulletproof web controller drives the rig unchanged. Stateful
+  (emits each mode char once, never per-frame), injectable clock, per-char debounce ≥
+  the firmware's blocking-primitive duration, in-flight suppression, and a forward
+  safety gate. Never uses autonomous `a` for follow (bearing-blind + no link-loss
+  failsafe); the self-terminating `f` nudge means a dropped link coasts to a stop.
+- **`open_link("char", ...)`** transport selector + `--connection char` in
+  `scripts/test_link.py`, degrading to `DummyBridge` on any link failure.
+- **Bench-test checklist** (`docs/guides/arduino-bench-check.md`) — the 5-minute
+  pre-demo rig verification a teammate runs without reading code.
+- 18 `CharBridge` unit tests (`tests/test_char_bridge.py`).
+
+### Changed
+- **Firmware** (`arduino/cat_ranger/cat_ranger.ino`) is now the team's tested sketch
+  made canonical, with surgical additive changes only: emit `D <cm>` telemetry on the
+  Bluetooth link (~10 Hz, no-echo `999` mapped to `-1`), move status acks to USB so
+  they can't fragment `D` lines, refresh distance on the telemetry timer (not every
+  loop), and **boot into manual mode** so a dropped bootstrap `b` never strands the
+  rig ignoring drive commands. Drive/turn/sensor/RGB/buzzer/LCD logic untouched.
+- `pyproject.toml` version reconciled 0.5.0 → 0.7.0 (it lagged the CHANGELOG).
+
 ## [0.6.0] - 2026-06-07
 
 Landing "10x": the public site (`apps/web`) gains four content-driven sections that
