@@ -6,6 +6,7 @@ import base64
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,40 @@ class CatLibraryStore:
         if row is None or row[0] is None:
             return None
         return bytes(row[0])
+
+    def match_by_thumb(
+        self,
+        thumb_jpeg: bytes,
+        *,
+        threshold: float = 0.55,
+        limit: int = 200,
+        similarity: Callable[[bytes, bytes], float] | None = None,
+    ) -> int | None:
+        """Return an existing library row id if ``thumb_jpeg`` matches a saved face."""
+        if not thumb_jpeg:
+            return None
+        score_fn = similarity
+        if score_fn is None:
+            from catranger.web.cat_match import thumb_similarity
+
+            score_fn = thumb_similarity
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, thumb_blob FROM cats WHERE thumb_blob IS NOT NULL "
+                "ORDER BY last_seen_ts DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        best_id: int | None = None
+        best_score = -1.0
+        for row in rows:
+            blob = row["thumb_blob"]
+            if not blob:
+                continue
+            score = score_fn(thumb_jpeg, bytes(blob))
+            if score >= float(threshold) and score > best_score:
+                best_score = score
+                best_id = int(row["id"])
+        return best_id
 
     def upsert_sighting(
         self,

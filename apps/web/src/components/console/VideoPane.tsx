@@ -3,10 +3,10 @@
 /**
  * MJPEG video. Three distinct failure surfaces (the vanilla panel only had one):
  *  - STALE: frames stopped arriving (telemetry frame_age_ms past the threshold).
- *  - UNREACHABLE: the <img> itself failed to load (server down / wrong origin /
- *    CORS) — there is no frame_age_ms signal in that case, so we catch onError.
- * A plain <img> is used (not next/image): MJPEG is a multipart stream, not a
- * static asset.
+ *  - UNREACHABLE: the stream fetch/decode failed — there is no frame_age_ms signal
+ *    in that case, so we catch onError from MjpegCanvas.
+ * Canvas + fetch replaces <img multipart/x-mixed-replace>, which can freeze black
+ * in Chromium (especially via the Next.js same-origin proxy) while WS overlays update.
  *
  * Stale detection uses hysteresis + delayed reload so brief frame gaps don't
  * remount the stream (which causes a visible full-frame flicker).
@@ -16,6 +16,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { videoURL } from "@/lib/api";
 import type { Telemetry } from "@/lib/useTelemetry";
 import { CameraPTZ } from "./CameraPTZ";
+import { MjpegCanvas } from "./MjpegCanvas";
 import { OverlayCanvas } from "./OverlayCanvas";
 import { ControlTip } from "./help";
 
@@ -52,13 +53,10 @@ function VideoPaneInner({ telemetry }: { telemetry: Telemetry | null }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="video-shell relative aspect-video w-full overflow-hidden rounded-xl border border-line bg-black">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <MjpegCanvas
           key={reloadKey}
           src={`${videoURL()}?k=${reloadKey}`}
-          alt="live robot video"
-          className="video-feed absolute inset-0 z-0 h-full w-full object-contain"
-          onLoad={() => {
+          onFrame={() => {
             setUnreachable(false);
             reloadScheduled.current = false;
           }}

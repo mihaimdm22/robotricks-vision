@@ -4,9 +4,8 @@
  * useTelemetry — the control WebSocket as a React hook.
  *
  * Owns: connect + auto-reconnect, the connecting/live/disconnected link state
- * (so the UI never renders stale numbers as if fresh), a 1s token-lease
- * heartbeat (holds the drive token; the DrivePad sends the faster MANUAL
- * watchdog heartbeat), and the typed `nack` from the server (e.g. observer).
+ * (so the UI never renders stale numbers as if fresh), a 200ms token-lease
+ * heartbeat (refreshes the MANUAL watchdog and holds the drive token), and the typed `nack` from the server (e.g. observer).
  *
  * StrictMode-safe: the socket + timers live in refs and are torn down in the
  * effect cleanup, so a double-mount doesn't leak sockets or duplicate timers.
@@ -122,6 +121,7 @@ export function useTelemetry() {
       if (!everLive) setLink("connecting");
       const ws = new WebSocket(wsURL());
       wsRef.current = ws;
+      ws.onopen = () => send({ type: "claim" });
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
         if (msg.type === "telemetry") {
@@ -141,7 +141,9 @@ export function useTelemetry() {
     }
     connect();
 
-    const heartbeat = setInterval(() => send({ type: "heartbeat" }), 1000);
+    const heartbeat = setInterval(() => {
+      send({ type: "heartbeat" });
+    }, 200);
 
     return () => {
       closed = true;

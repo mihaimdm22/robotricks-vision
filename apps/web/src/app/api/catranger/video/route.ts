@@ -1,5 +1,8 @@
 import type { NextRequest } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 const DEFAULT_BACKEND = strip(
   process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080",
 );
@@ -14,10 +17,7 @@ export async function GET(req: NextRequest) {
 
   let upstream: Response;
   try {
-    upstream = await fetch(`${backend}/video`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(15_000),
-    });
+    upstream = await fetch(`${backend}/video`, { cache: "no-store" });
   } catch {
     return new Response("Video backend unreachable", { status: 502 });
   }
