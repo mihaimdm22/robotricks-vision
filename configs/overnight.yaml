@@ -1,0 +1,24 @@
+# Overnight plan: run unattended, archive every run to runs/history/.
+#   make overnight        # run this plan
+#   make history          # review results in the morning
+#
+# Each job runs in its own subprocess (a crash isolates to that job). Training jobs are
+# SKIPPED automatically if the cat dataset isn't prepared (baseline-first), and the eval
+# jobs still run on the pretrained baseline. Per-trial time budget lives in
+# configs/train.yaml (autoresearch.budget_min); training device lives there too (mps).
+jobs:
+  # 1) Fixed-budget keep/reject fine-tune sweep (winner -> runs/train/best_trial.json).
+  - kind: autoresearch
+    config: configs/train.yaml
+
+  # 2) Eval both approaches on the provided How-Far stills (baseline weights).
+  - kind: eval
+    source: data/raw/how_far
+    config: cat_distance
+    approach: A        # YOLO11 (CNN)
+    device: mps
+  - kind: eval
+    source: data/raw/how_far
+    config: cat_distance
+    approach: B        # RT-DETR (transformer)
+    device: mps

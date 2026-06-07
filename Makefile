@@ -5,8 +5,8 @@ APPROACH ?= A
 CONFIG   ?= cat_distance
 
 .PHONY: help install install-ml lock data doctor demo demo-video eval \
-        prepare train autoresearch lint format typecheck test check clean \
-        web web-setup fetch-weights
+        prepare train autoresearch overnight promote promote-revert history \
+        lint format typecheck test check clean web web-setup fetch-weights
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n", $$1, $$2}'
@@ -49,6 +49,18 @@ train:               ## fine-tune YOLO (baseline-first; never blocks the demo)
 
 autoresearch:        ## frozen-metric keep/reject hyperparameter loop
 	uv run python -m catranger.train.autoresearch --config configs/train.yaml
+
+overnight:           ## run the unattended overnight plan (configs/overnight.yaml), archive history
+	uv run python scripts/overnight.py --config configs/overnight.yaml
+
+promote:             ## morning: wire the fine-tune winner into the pipeline (gated; baseline-safe)
+	uv run python scripts/promote.py
+
+promote-revert:      ## roll the pipeline back to the pretrained baseline
+	uv run python scripts/promote.py --revert
+
+history:             ## print the run-history index (runs/history/INDEX.md)
+	uv run python -m catranger.history
 
 lint:                ## ruff lint (with safe autofixes)
 	uv run ruff check catranger scripts tests --fix

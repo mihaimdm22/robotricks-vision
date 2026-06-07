@@ -179,6 +179,31 @@ uv run catranger autoresearch   # karpathy/autoresearch-style keep/reject loop o
 After training, point `detector.finetuned_weights` in `configs/cat_distance.yaml` at the
 new `best.pt` and the demo uses it automatically.
 
+### Overnight runs (unattended train + eval, archived to history)
+
+Run the whole sweep + eval plan unattended, then wire in the winner in the morning:
+
+```bash
+make overnight        # run configs/overnight.yaml unattended; archive every run to runs/history/
+make history          # in the morning: print the run-history index (runs/history/INDEX.md)
+make promote          # wire the fine-tune winner into the pipeline (gated; asks first)
+make promote-revert   # one-command rollback to the pretrained baseline
+```
+
+- **Plan** lives in [`configs/overnight.yaml`](configs/overnight.yaml): a list of `autoresearch` /
+  `train` / `eval` jobs. Per-trial time budget and the training device (`mps`) live in
+  `configs/train.yaml`.
+- **Resilient by design**: each job runs in its own subprocess, so a torch segfault, an OOM,
+  or a missing dataset takes down only that job — never the whole night. If the cat dataset
+  isn't prepared, training jobs are *skipped* (logged) and the baseline evals still run.
+- **History** is on-disk under `runs/history/` (gitignored — local, but stores everything):
+  one timestamped dir per run with `meta.json`, `params.json`, `metrics.json`, the captured
+  `run.log`, and copied artifacts (`best.pt` / `report.md`), plus an append-only `index.jsonl`
+  and a rendered `INDEX.md`.
+- **Promotion is gated** (the hard rule): `make promote` shows the winner + the keep/reject
+  trial log and asks before editing `configs/cat_distance.yaml`; the baseline is always one
+  `make promote-revert` away.
+
 ---
 
 ## Hardware — fully wireless (live-demo prop, not what's scored)

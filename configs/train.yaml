@@ -6,7 +6,7 @@ epochs: 40
 imgsz: 640
 batch: 16
 seed: 0
-device: 0                       # gpu id; "cpu" to force CPU
+device: mps                     # apple-silicon GPU (MacBook Pro); 0 = CUDA gpu id, "cpu" = force CPU
 project: runs/train
 name: cat_finetune
 patience: 12                    # early stop
