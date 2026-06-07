@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import { videoURL } from "@/lib/api";
 import type { Telemetry } from "@/lib/useTelemetry";
+import { OverlayCanvas } from "./OverlayCanvas";
 
 export function VideoPane({ telemetry }: { telemetry: Telemetry | null }) {
   const [reloadKey, setReloadKey] = useState(0);
@@ -41,6 +42,8 @@ export function VideoPane({ telemetry }: { telemetry: Telemetry | null }) {
         onLoad={() => setUnreachable(false)}
         onError={() => setUnreachable(true)}
       />
+      {/* WS-B1: crisp target ring + labels over the burned-in boxes, dimmed when not live */}
+      <OverlayCanvas telemetry={telemetry} live={!stale && !unreachable} />
       {unreachable ? (
         <Overlay tone="danger">
           VIDEO FEED UNREACHABLE

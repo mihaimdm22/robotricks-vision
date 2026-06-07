@@ -5,8 +5,8 @@ APPROACH ?= A
 CONFIG   ?= cat_distance
 
 .PHONY: help install install-ml lock data doctor demo demo-video eval \
-        prepare train autoresearch overnight promote promote-revert history \
-        lint format typecheck test check clean web web-setup fetch-weights
+        prepare train autoresearch keepreject overnight promote promote-revert history jobs \
+        lint format typecheck test check clean web web-setup web-test fetch-weights
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n", $$1, $$2}'
@@ -38,17 +38,20 @@ demo:                ## run the demo on $(SOURCE) (default: provided how_far sti
 demo-video:          ## run the demo on a cat video (set SOURCE=...)
 	uv run python scripts/demo.py --source $(SOURCE) --approach $(APPROACH) --show
 
-eval:                ## run the eval harness + write the performance report
-	uv run python -m catranger.eval.report --source $(SOURCE) --config $(CONFIG)
+eval:                ## run the eval harness + report (set GTS=path for distance MAE; see configs/eval/)
+	uv run python -m catranger.eval.report --source $(SOURCE) --config $(CONFIG) $(if $(GTS),--gts $(GTS),)
 
-prepare:             ## download + format a cat dataset for fine-tuning
-	uv run python -m catranger.train.prepare --config configs/train.yaml
+prepare:             ## format a cat dataset (set DATASET=<id> to use configs/datasets.yaml)
+	uv run python -m catranger.train.prepare --config configs/train.yaml $(if $(DATASET),--dataset $(DATASET),)
 
 train:               ## fine-tune YOLO (baseline-first; never blocks the demo)
 	uv run python -m catranger.train.train --config configs/train.yaml
 
 autoresearch:        ## frozen-metric keep/reject hyperparameter loop
 	uv run python -m catranger.train.autoresearch --config configs/train.yaml
+
+keepreject:          ## keep/reject a change on the frozen metrics (BASELINE=base.json CANDIDATE=cand.json)
+	uv run python -m catranger.eval.keepreject --baseline $(BASELINE) --candidate $(CANDIDATE)
 
 overnight:           ## run the unattended overnight plan (configs/overnight.yaml), archive history
 	uv run python scripts/overnight.py --config configs/overnight.yaml
@@ -59,8 +62,11 @@ promote:             ## morning: wire the fine-tune winner into the pipeline (ga
 promote-revert:      ## roll the pipeline back to the pretrained baseline
 	uv run python scripts/promote.py --revert
 
-history:             ## print the run-history index (runs/history/INDEX.md)
+history:             ## print the run-history archive index (runs/history/INDEX.md)
 	uv run python -m catranger.history
+
+jobs:                ## print the durable job queue (live state; sibling of GET /api/jobs)
+	uv run python -m catranger.jobqueue
 
 lint:                ## ruff lint (with safe autofixes)
 	uv run ruff check catranger scripts tests --fix
@@ -86,6 +92,9 @@ web-setup:           ## install web console deps (Python web extra + pnpm)
 
 web:                 ## run FastAPI + the Next.js console together (cross-platform)
 	uv run python scripts/web.py
+
+web-test:            ## run the console's TypeScript unit tests (vitest)
+	pnpm --dir apps/web test
 
 fetch-weights:       ## pre-download detector weights so the demo runs offline
 	uv run python scripts/fetch_weights.py
