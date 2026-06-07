@@ -3,10 +3,11 @@
 SOURCE   ?= data/raw/how_far
 APPROACH ?= A
 CONFIG   ?= cat_distance
+CAMERA   ?= tapo_c211
 
 .PHONY: help install install-ml lock data doctor demo demo-video eval \
         prepare train autoresearch overnight promote promote-revert history \
-        lint format typecheck test check clean web web-setup fetch-weights
+        calibrate lint format typecheck test check clean web web-setup fetch-weights
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n", $$1, $$2}'
@@ -61,6 +62,10 @@ promote-revert:      ## roll the pipeline back to the pretrained baseline
 
 history:             ## print the run-history index (runs/history/INDEX.md)
 	uv run python -m catranger.history
+
+calibrate:           ## re-anchor camera fx/fy: make calibrate H=0.297 Z=2.0 PX=240
+	uv run python scripts/calibrate_camera.py --camera $(CAMERA) \
+		--known-height-m $(H) --distance-m $(Z) --pixel-height-px $(PX)
 
 lint:                ## ruff lint (with safe autofixes)
 	uv run ruff check catranger scripts tests --fix
