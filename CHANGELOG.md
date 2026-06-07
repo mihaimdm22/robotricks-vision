@@ -2,6 +2,32 @@
 
 All notable changes to CatRanger are documented here.
 
+## [0.6.0] - 2026-06-07
+
+Landing "10x": the public site (`apps/web`) gains four content-driven sections that
+tell the architecture and team story for the demo and deck, on the existing
+mechanical-movement brand (glass/glow, drive-orange→motion-purple, Space Grotesk). No
+new design tokens; the scored perception core is untouched (web-only, CLAUDE.md
+maintenance scope).
+
+### Added
+- **Architecture section** (`#architecture`). The end-to-end pipeline as a six-stage
+  flow (Capture → Undistort → Detect → Track → Distance → Predict & follow), the two
+  interchangeable detector approaches (YOLO11s/ByteTrack vs RT-DETR-l/BoT-SORT+ReID),
+  and the distance-fusion explainer (geometry `Z = fy·H/h_px` ⊕ metric depth →
+  confidence-weighted median ± CI). Content sourced from the README so it stays honest.
+- **Metrics proof band** (`#metrics`). The frozen-metric doctrine made visible —
+  distance MAE (the scored metric), real-time FPS, track continuity through occlusion,
+  and ±1 cm ultrasonic ground truth. Named dimensions, not invented numbers.
+- **Team section** (`#team`). Four members with roles and profile links.
+  `TeamAvatar` renders `public/team/<slug>.jpg` when present (build-time `fs` existence
+  check, so missing photos never 404 via `next/image`) and falls back to a branded
+  initials disc otherwise. Drop a JPG in and rebuild — no code change.
+- **Docs section** (`#docs`). Go-deeper cards linking to the README/quickstart, the
+  research & architecture doc, the audit, and this changelog.
+- Six landing icons (`layers`, `gauge`, `users`, `book`, `linkedin`, plus existing) and
+  refreshed nav + footer wiring for the new anchors.
+
 ## [0.5.0] - 2026-06-07
 
 The "10x" reliability + extensibility release: unattended runs survive crashes, the

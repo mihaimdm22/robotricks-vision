@@ -9,7 +9,12 @@ export type IconName =
   | "fingerprint"
   | "camera"
   | "chip"
-  | "wave";
+  | "wave"
+  | "layers"
+  | "gauge"
+  | "users"
+  | "book"
+  | "linkedin";
 
 type Props = SVGProps<SVGSVGElement>;
 
@@ -110,6 +115,52 @@ export function Wave(props: Props) {
   );
 }
 
+export function Layers(props: Props) {
+  return (
+    <svg {...base} {...props} aria-hidden>
+      <path d="M12 3 2.5 8 12 13l9.5-5L12 3Z" />
+      <path d="M2.5 12 12 17l9.5-5M2.5 16 12 21l9.5-5" opacity="0.55" />
+    </svg>
+  );
+}
+
+export function Gauge(props: Props) {
+  return (
+    <svg {...base} {...props} aria-hidden>
+      <path d="M4 18a8 8 0 1 1 16 0" />
+      <path d="M12 18 16 11" />
+      <circle cx="12" cy="18" r="1.4" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function Users(props: Props) {
+  return (
+    <svg {...base} {...props} aria-hidden>
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+      <path d="M16 5.4a3.2 3.2 0 0 1 0 5.2M17.5 19a5.5 5.5 0 0 0-3-4.9" opacity="0.7" />
+    </svg>
+  );
+}
+
+export function Book(props: Props) {
+  return (
+    <svg {...base} {...props} aria-hidden>
+      <path d="M5 4.5h9a2.5 2.5 0 0 1 2.5 2.5v12.5H7.5A2.5 2.5 0 0 1 5 17V4.5Z" />
+      <path d="M16.5 19.5V7A2.5 2.5 0 0 1 19 4.5M9 9h4M9 12.5h4" />
+    </svg>
+  );
+}
+
+export function Linkedin(props: Props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M6.94 5a1.94 1.94 0 1 1-3.88 0 1.94 1.94 0 0 1 3.88 0ZM3.4 8.4h3.1V21H3.4V8.4Zm5.3 0h2.97v1.72h.04c.41-.78 1.42-1.6 2.93-1.6 3.13 0 3.71 2.06 3.71 4.74V21h-3.1v-5.56c0-1.33-.02-3.03-1.85-3.03-1.85 0-2.13 1.45-2.13 2.94V21H8.7V8.4Z" />
+    </svg>
+  );
+}
+
 const REGISTRY: Record<IconName, (p: Props) => React.ReactElement> = {
   gear: Gear,
   ruler: Ruler,
@@ -120,6 +171,11 @@ const REGISTRY: Record<IconName, (p: Props) => React.ReactElement> = {
   camera: Camera,
   chip: Chip,
   wave: Wave,
+  layers: Layers,
+  gauge: Gauge,
+  users: Users,
+  book: Book,
+  linkedin: Linkedin,
 };
 
 export function Icon({ name, ...props }: { name: IconName } & Props) {

@@ -3,7 +3,11 @@ import { Nav } from "@/components/site/nav";
 import { Hero } from "@/components/site/hero";
 import { Capabilities } from "@/components/site/capabilities";
 import { HowItWorks } from "@/components/site/how-it-works";
+import { Architecture } from "@/components/site/architecture";
+import { Metrics } from "@/components/site/metrics";
 import { HardwareStrip } from "@/components/site/hardware-strip";
+import { Team } from "@/components/site/team";
+import { Docs } from "@/components/site/docs";
 import { CallToAction } from "@/components/site/cta";
 import { Footer } from "@/components/site/footer";
 
@@ -22,7 +26,11 @@ export default function Home() {
         <Hero />
         <Capabilities />
         <HowItWorks />
+        <Architecture />
+        <Metrics />
         <HardwareStrip />
+        <Team />
+        <Docs />
         <CallToAction />
       </main>
       <Footer />
