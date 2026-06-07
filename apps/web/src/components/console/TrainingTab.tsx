@@ -20,6 +20,7 @@ import {
   type TrainStatus,
   type TrainHistoryRun,
 } from "@/lib/api";
+import { ControlTip } from "./help";
 
 const KINDS: { id: TrainKind; label: string }[] = [
   { id: "prepare", label: "prepare — build dataset" },
@@ -269,14 +270,17 @@ export function TrainingTab() {
           </label>
         )}
         <div className="flex items-center gap-3">
-          <button type="button" className="op-btn" onClick={run} disabled={!canRun}>
-            {running ? "Running…" : "Run"}
-          </button>
-          {running && (
-            // Neutral Stop — NEVER red, never near E-STOP. A cancel is benign.
-            <button type="button" className="op-btn" onClick={() => api.trainCancel()}>
-              Stop
+          <ControlTip helpId="train.run">
+            <button type="button" className="op-btn" onClick={run} disabled={!canRun}>
+              {running ? "Running…" : "Run"}
             </button>
+          </ControlTip>
+          {running && (
+            <ControlTip helpId="train.stop">
+              <button type="button" className="op-btn" onClick={() => api.trainCancel()}>
+                Stop
+              </button>
+            </ControlTip>
           )}
           {!canRun && !running && blockReason && (
             <span className="text-xs text-warn">{blockReason}</span>
@@ -404,29 +408,35 @@ export function TrainingTab() {
                       {finished &&
                         (confirming ? (
                           <span className="inline-flex gap-1">
-                            <button
-                              type="button"
-                              className="op-btn px-2 py-1 text-xs"
-                              onClick={() => promote(r.dir)}
-                            >
-                              Confirm
-                            </button>
-                            <button
-                              type="button"
-                              className="op-btn px-2 py-1 text-xs"
-                              onClick={() => setConfirmDir(null)}
-                            >
-                              Cancel
-                            </button>
+                            <ControlTip helpId="train.confirm">
+                              <button
+                                type="button"
+                                className="op-btn px-2 py-1 text-xs"
+                                onClick={() => promote(r.dir)}
+                              >
+                                Confirm
+                              </button>
+                            </ControlTip>
+                            <ControlTip helpId="train.promote_cancel">
+                              <button
+                                type="button"
+                                className="op-btn px-2 py-1 text-xs"
+                                onClick={() => setConfirmDir(null)}
+                              >
+                                Cancel
+                              </button>
+                            </ControlTip>
                           </span>
                         ) : (
-                          <button
-                            type="button"
-                            className="op-btn px-2 py-1 text-xs"
-                            onClick={() => setConfirmDir(r.dir)}
-                          >
-                            Promote
-                          </button>
+                          <ControlTip helpId="train.promote">
+                            <button
+                              type="button"
+                              className="op-btn px-2 py-1 text-xs"
+                              onClick={() => setConfirmDir(r.dir)}
+                            >
+                              Promote
+                            </button>
+                          </ControlTip>
                         ))}
                     </td>
                   </tr>

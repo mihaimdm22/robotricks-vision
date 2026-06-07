@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type ModelInfo } from "@/lib/api";
+import { ControlTip } from "./help";
 
 function fmtMetric(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v)) return "—";
@@ -116,14 +117,16 @@ export function ModelsTab() {
                     </td>
                     <td className="py-2 font-mono text-dim">{fmtDuration(m.duration_s)}</td>
                     <td className="py-2 text-right">
-                      <button
-                        type="button"
-                        className="op-btn px-2 py-1 text-xs"
-                        disabled={isActive || busy === m.id}
-                        onClick={() => select(m.id)}
-                      >
-                        {isActive ? "active" : busy === m.id ? "loading…" : "use"}
-                      </button>
+                      <ControlTip helpId="models.use">
+                        <button
+                          type="button"
+                          className="op-btn px-2 py-1 text-xs"
+                          disabled={isActive || busy === m.id}
+                          onClick={() => select(m.id)}
+                        >
+                          {isActive ? "active" : busy === m.id ? "loading…" : "use"}
+                        </button>
+                      </ControlTip>
                     </td>
                   </tr>
                 );

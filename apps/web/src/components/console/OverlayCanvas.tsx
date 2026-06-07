@@ -48,9 +48,12 @@ export function OverlayCanvas({ telemetry, live }: { telemetry: Telemetry | null
       const dpr = window.devicePixelRatio || 1;
       const cw = parent.clientWidth;
       const ch = parent.clientHeight;
-      // Size the backing store to device pixels for crisp text; CSS size stays the element.
-      canvas.width = Math.round(cw * dpr);
-      canvas.height = Math.round(ch * dpr);
+      const bw = Math.round(cw * dpr);
+      const bh = Math.round(ch * dpr);
+      if (canvas.width !== bw || canvas.height !== bh) {
+        canvas.width = bw;
+        canvas.height = bh;
+      }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, cw, ch);
       if (!overlay || overlay.dets.length === 0) return;
@@ -99,7 +102,12 @@ export function OverlayCanvas({ telemetry, live }: { telemetry: Telemetry | null
     return () => ro.disconnect();
   }, [overlay, live]);
 
-  return <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />;
+  return (
+    <canvas
+      ref={canvasRef}
+      className="pointer-events-none absolute inset-0 z-10 h-full w-full"
+    />
+  );
 }
 
 function drawDet(
@@ -112,8 +120,8 @@ function drawDet(
   const b = denormBox(d.xyxy_norm, rect);
   ctx.strokeStyle = color;
   ctx.lineWidth = isTarget ? 3 : 1.5;
-  // The box itself is burned into the JPEG; the target gets an extra crisp ring.
-  if (isTarget) ctx.strokeRect(b.x, b.y, b.w, b.h);
+  // Draw all boxes on canvas so overlays stay aligned when MJPEG repaints stall.
+  ctx.strokeRect(b.x, b.y, b.w, b.h);
 
   const label = labelFor(d, isTarget);
   if (!label) return;

@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type EvalMetrics, type EvalStatus } from "@/lib/api";
+import { ControlTip } from "./help";
 
 const SECTION_TITLES: Record<string, string> = {
   fps: "Throughput (FPS)",
@@ -124,13 +125,17 @@ export function EvalTab() {
           </label>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" className="op-btn" onClick={run} disabled={running}>
-            {running ? "Running…" : "Run eval"}
-          </button>
-          {running && (
-            <button type="button" className="op-btn" onClick={() => api.evalCancel()}>
-              Cancel
+          <ControlTip helpId="eval.run">
+            <button type="button" className="op-btn" onClick={run} disabled={running}>
+              {running ? "Running…" : "Run eval"}
             </button>
+          </ControlTip>
+          {running && (
+            <ControlTip helpId="eval.cancel">
+              <button type="button" className="op-btn" onClick={() => api.evalCancel()}>
+                Cancel
+              </button>
+            </ControlTip>
           )}
           <span className="text-xs text-dim">
             {status ? `state: ${status.state}` : ""}

@@ -41,6 +41,19 @@ export type Overlay = {
   global_flags: string[];
 };
 
+/** Live cat cards for the picker (thumbnails refreshed ~2 Hz). */
+export type CatCard = {
+  id: number;
+  conf: number;
+  dist_m: number | null;
+  bearing_deg: number;
+  is_locked: boolean;
+  is_preferred: boolean;
+  thumb_jpeg_b64: string | null;
+  in_view?: boolean;
+  library_id?: number;
+};
+
 export type Telemetry = {
   mode: Mode;
   stop_reason: StopReason;
@@ -52,6 +65,10 @@ export type Telemetry = {
   fps: number | null;
   target_id: number | null;
   target_ids?: number[];
+  preferred_target_id?: number | null;
+  cats?: CatCard[];
+  find_library_id?: number | null;
+  find_library_name?: string | null;
   target_dist_m: number | null;
   target_bearing_deg: number | null;
   gt_cm: number | null;
@@ -70,6 +87,14 @@ export type Telemetry = {
   you_are_controller: boolean;
   controller_id: number | null;
   overlay?: Overlay | null;
+  /** CharBridge firmware peripheral toggles (null when not on char firmware). */
+  peripherals?: { buzzer: boolean; rgb: boolean; lcd: boolean } | null;
+  sonar_zone?: "red" | "yellow" | "green" | "cyan" | "blue" | null;
+  sonar_obstacle?: boolean;
+  buzzer_active?: boolean;
+  sonar_range_cm?: number;
+  sonar_display_cm?: number | null;
+  sonar_no_echo?: boolean;
 };
 
 export type LinkState = "connecting" | "live" | "disconnected";
@@ -89,14 +114,18 @@ export function useTelemetry() {
   useEffect(() => {
     let closed = false;
     let reconnect: ReturnType<typeof setTimeout> | undefined;
+    let everLive = false;
 
     function connect() {
-      setLink("connecting");
+      // Only show "connecting" on the very first socket open — reconnects stay
+      // on "disconnected" until telemetry returns so the UI doesn't flash.
+      if (!everLive) setLink("connecting");
       const ws = new WebSocket(wsURL());
       wsRef.current = ws;
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
         if (msg.type === "telemetry") {
+          everLive = true;
           setLink("live");
           setTelemetry(msg as Telemetry);
         } else if (msg.type === "nack") {

@@ -61,7 +61,9 @@ export function clearApiBase(): void {
 }
 
 export function videoURL(): string {
-  return `${apiBase()}/video`;
+  // Same-origin proxy avoids cross-origin MJPEG repaint bugs in Chromium/Safari.
+  const base = encodeURIComponent(apiBase());
+  return `/api/catranger/video?backend=${base}`;
 }
 
 export function wsURL(): string {
@@ -89,11 +91,23 @@ async function req<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
     });
     const body = await r.json().catch(() => ({}));
     if (!r.ok && body?.ok !== false) {
+      const needsRestart =
+        r.status === 404 &&
+        (path.includes("/robot/flash") || path.startsWith("/api/cats"));
+      const fix = needsRestart
+        ? "restart `catranger serve` (or `make web`) so the backend loads the latest API routes"
+        : "check the server is running and reachable";
+      const problem =
+        r.status === 404 && path.includes("/robot/flash")
+          ? "flash API not found on the control server"
+          : r.status === 404 && path.startsWith("/api/cats")
+            ? "cat library API not found — backend is out of date"
+            : `request failed (${r.status})`;
       return {
         ok: false,
         code: `http_${r.status}`,
-        problem: `request failed (${r.status})`,
-        fix: "check the server is running and reachable",
+        problem,
+        fix,
       };
     }
     return body as ApiResult<T>;
@@ -111,6 +125,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
 const post = <T>(path: string, body?: unknown) =>
   req<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
 const get = <T>(path: string) => req<T>(path, { method: "GET" });
+const patch = <T>(path: string, body?: unknown) =>
+  req<T>(path, { method: "PATCH", body: JSON.stringify(body ?? {}) });
+const del = <T>(path: string) => req<T>(path, { method: "DELETE" });
 
 // ----------------------------------------------------------------- domain types
 export type Mode = "IDLE" | "MANUAL" | "FOLLOW";
@@ -158,6 +175,24 @@ export type DiscoverResult = {
   hint: string | null;
 };
 
+export type FlashReadiness = {
+  ok: boolean;
+  arduino_cli: string | null;
+  sketch_dir: string;
+  fqbn: string;
+  problem?: string;
+  fix?: string;
+};
+
+export type FlashStatus = {
+  ok: true;
+  state: "idle" | "running" | "done" | "error";
+  elapsed_s?: number | null;
+  port?: string | null;
+  error?: string | null;
+  result?: { ok: boolean; log?: string; problem?: string; fix?: string };
+};
+
 /** Camera sensor/lens profile — picks the intrinsics + (un)distortion model. */
 export type CameraProfile = "go2_1080p" | "tapo_c211";
 
@@ -168,6 +203,25 @@ export type CameraConnectResult = {
   camera_profile: string;
   calibrated: boolean;
   ptz_available?: boolean;
+};
+
+export type SonarCalibrateResult = {
+  ok: boolean;
+  scale?: number;
+  old_fy?: number;
+  new_fy?: number;
+  n_samples?: number;
+  pred_m_mean?: number;
+  gt_m_mean?: number;
+  baseline_m?: number;
+  profile?: string;
+  dry_run?: boolean;
+  calibrated?: boolean;
+  camera_profile?: string;
+  warning?: string;
+  code?: string;
+  problem?: string;
+  fix?: string;
 };
 
 // ---- training (CV tab) ----
@@ -231,6 +285,12 @@ export const api = {
   connectCamera: (spec: string, camera?: CameraProfile) =>
     post<CameraConnectResult>("/api/camera/connect", camera ? { spec, camera } : { spec }),
   disconnectCamera: () => post("/api/camera/disconnect"),
+  calibrateWithSonar: (body: {
+    camera?: CameraProfile;
+    baseline_m?: number;
+    duration_s?: number;
+    dry_run?: boolean;
+  }) => post<SonarCalibrateResult>("/api/calibrate/sonar", body),
   ptz: (pan: number, tilt: number) =>
     post<{ throttled?: boolean }>("/api/camera/ptz", { pan, tilt }),
   ptzPreset: (name: string) => post("/api/camera/ptz/preset", { name }),
@@ -242,6 +302,10 @@ export const api = {
     }),
   disconnectRobot: () => post("/api/robot/disconnect"),
   discover: () => get<DiscoverResult>("/api/robot/discover"),
+  flashReadiness: () => get<FlashReadiness>("/api/robot/flash/readiness"),
+  flashFirmware: (port: string | null) =>
+    post<{ state: string; port?: string | null }>("/api/robot/flash", { port }),
+  flashStatus: () => get<FlashStatus>("/api/robot/flash/status"),
   evalRun: (body: {
     source: string;
     approach: string;
@@ -272,4 +336,35 @@ export const api = {
     name?: string;
   }) =>
     post<{ weights: string; model_id: string; cli_changed: boolean }>("/api/train/promote", body),
+  listCats: async (limit = 200) => {
+    const res = await get<{ ok: true; cats: LibraryCat[] }>(`/api/cats?limit=${limit}`);
+    if (!res.ok) throw new Error(res.problem);
+    return res;
+  },
+  renameCat: async (id: number, name: string) => {
+    const res = await patch<{ ok: true; id: number; name: string }>(`/api/cats/${id}`, { name });
+    if (!res.ok) throw new Error(res.problem);
+    return res;
+  },
+  deleteCat: async (id: number) => {
+    const res = await del<{ ok: true; id: number }>(`/api/cats/${id}`);
+    if (!res.ok) throw new Error(res.problem);
+    return res;
+  },
+  findCat: (id: number, follow = true) =>
+    post<{ ok: true; find_library_id: number; mode: string }>(`/api/cats/${id}/find`, { follow }),
+};
+
+export type LibraryCat = {
+  id: number;
+  name: string;
+  last_tracker_id: number | null;
+  last_conf: number | null;
+  last_dist_m: number | null;
+  last_bearing_deg: number | null;
+  last_seen_ts: number | null;
+  sighting_count: number;
+  created_ts: number;
+  has_thumb?: boolean;
+  thumb_jpeg_b64?: string | null;
 };

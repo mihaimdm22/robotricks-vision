@@ -12,8 +12,18 @@
 
 import type { Telemetry } from "@/lib/useTelemetry";
 import { api } from "@/lib/api";
+import { ControlTip, SectionTitle } from "./help";
+import type { HelpId } from "@/lib/console-help";
 
 const STEP = 0.25;
+
+const PTZ_HELP: Record<string, HelpId> = {
+  up: "ptz.up",
+  down: "ptz.down",
+  left: "ptz.left",
+  right: "ptz.right",
+  home: "ptz.home",
+};
 
 export function CameraPTZ({ telemetry }: { telemetry: Telemetry | null }) {
   const enabled = Boolean(telemetry?.ptz_available);
@@ -27,25 +37,25 @@ export function CameraPTZ({ telemetry }: { telemetry: Telemetry | null }) {
     if (enabled) api.ptz(pan, tilt);
   };
 
-  const btn = (label: string, pan: number, tilt: number, area: string) => (
-    <button
-      key={area}
-      type="button"
-      disabled={!enabled}
-      style={{ gridArea: area }}
-      className="op-btn"
-      onClick={() => nudge(pan, tilt)}
-    >
-      {label}
-    </button>
+  const btn = (label: string, pan: number, tilt: number, area: string, helpKey: string) => (
+    <ControlTip key={area} helpId={PTZ_HELP[helpKey]} hostStyle={{ gridArea: area }} fill>
+      <button
+        type="button"
+        disabled={!enabled}
+        className="op-btn h-full w-full"
+        onClick={() => nudge(pan, tilt)}
+      >
+        {label}
+      </button>
+    </ControlTip>
   );
 
   return (
     <div className="op-surface flex flex-col gap-2 p-3">
       <div className="flex items-center justify-between">
-        <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-dim">
+        <SectionTitle helpId="section.ptz" className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-dim">
           Camera pan/tilt
-        </span>
+        </SectionTitle>
         {reason && <span className="text-xs text-warn">{reason}</span>}
       </div>
       <div className="flex items-center gap-3">
@@ -53,23 +63,24 @@ export function CameraPTZ({ telemetry }: { telemetry: Telemetry | null }) {
           className="grid gap-1.5"
           style={{
             gridTemplateAreas: `". up ." "left mid right" ". down ."`,
-            gridTemplateColumns: "2.5rem 2.5rem 2.5rem",
+            gridTemplateColumns: "repeat(3, 2.75rem)",
+            gridTemplateRows: "repeat(3, 2.75rem)",
           }}
         >
-          {btn("▲", 0, STEP, "up")}
-          {btn("◀", -STEP, 0, "left")}
-          <button
-            type="button"
-            disabled={!enabled}
-            style={{ gridArea: "mid" }}
-            className="op-btn"
-            onClick={() => enabled && api.ptzPreset("home")}
-            title="Recall home preset"
-          >
-            ⌂
-          </button>
-          {btn("▶", STEP, 0, "right")}
-          {btn("▼", 0, -STEP, "down")}
+          {btn("▲", 0, STEP, "up", "up")}
+          {btn("◀", -STEP, 0, "left", "left")}
+          <ControlTip helpId="ptz.home" hostStyle={{ gridArea: "mid" }} fill>
+            <button
+              type="button"
+              disabled={!enabled}
+              className="op-btn h-full w-full"
+              onClick={() => enabled && api.ptzPreset("home")}
+            >
+              ⌂
+            </button>
+          </ControlTip>
+          {btn("▶", STEP, 0, "right", "right")}
+          {btn("▼", 0, -STEP, "down", "down")}
         </div>
         <span className="text-xs text-dim">
           Independent of drive mode — moves the camera, not the robot.
