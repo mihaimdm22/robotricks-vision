@@ -36,10 +36,10 @@ export function TeamAvatar({
         <Image
           src={`/team/${slug}.jpg`}
           alt={name}
-          width={80}
-          height={80}
+          fill
+          sizes="80px"
           onError={() => setFailed(true)}
-          className="relative size-20 object-cover"
+          className="object-cover"
         />
       )}
     </span>

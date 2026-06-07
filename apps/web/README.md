@@ -1,6 +1,12 @@
 # CatRanger web (Next.js)
 
-The web front-end: a marketing landing page (`/`) **and** the live robot control
+The web front-end for **[CatRanger](../../README.md)** — a computer-vision system that
+implements and adapts two Monsson hack-a-ton 2026 challenges,
+[How Far?](https://hackaton.ambasada.pro/challenges/monsson-how-far/) (monocular metric
+distance) and [Cat Tracker](https://hackaton.ambasada.pro/challenges/monsson-cat-tracker/)
+(detect · track · follow).
+
+This package is a marketing landing page (`/`) **and** the live robot control
 console (`/console`). The console talks to the Python FastAPI control plane
 (`catranger serve`) — Next.js owns all UI; Python owns the camera, YOLO, and the
 serial/BLE robot link.

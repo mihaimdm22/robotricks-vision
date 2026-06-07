@@ -33,7 +33,7 @@ export function Nav() {
           </span>
         </Link>
 
-        <div className="hidden items-center gap-7 md:flex">
+        <div className="hidden items-center gap-7 lg:flex">
           {nav.links.map((l) => (
             <Link
               key={l.label}
@@ -56,7 +56,7 @@ export function Nav() {
             aria-label="Toggle menu"
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
-            className="flex size-10 items-center justify-center rounded-xl border border-line text-fg md:hidden"
+            className="flex size-10 items-center justify-center rounded-xl border border-line text-fg lg:hidden"
           >
             <span className="relative block h-3 w-4">
               <span
@@ -75,7 +75,7 @@ export function Nav() {
       </nav>
 
       {open && (
-        <div className="glass mx-auto mt-2 max-w-6xl space-y-1 p-3 md:hidden">
+        <div className="glass mx-auto mt-2 max-w-6xl space-y-1 p-3 lg:hidden">
           {nav.links.map((l) => (
             <Link
               key={l.label}
